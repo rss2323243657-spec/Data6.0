@@ -1,0 +1,6 @@
+{
+  "name": "Walmart 店铺月度经营分析与利润诊断系统",
+  "description": "专业级 Walmart US Marketplace 月度经营分析、广告效能、库存健康、仓储费用、退货归因与利润诊断系统",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
