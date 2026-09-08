@@ -23,6 +23,7 @@ import {
 } from 'recharts';
 import { AnalysisResult } from '../types';
 import { CollapsibleTableWrapper } from './CollapsibleTableWrapper';
+import { DimensionSortToolbar, SortOption } from './DimensionSortToolbar';
 
 interface SalesAnalysisViewProps {
   result: AnalysisResult;
@@ -35,6 +36,7 @@ export const SalesAnalysisView: React.FC<SalesAnalysisViewProps> = ({ result }) 
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<string>('salesAmount');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [hideZeroData, setHideZeroData] = useState<boolean>(true);
 
   const coreFinancials = result.coreFinancials || ({} as any);
   const skuMetrics = result.skuMetrics || [];
@@ -44,20 +46,23 @@ export const SalesAnalysisView: React.FC<SalesAnalysisViewProps> = ({ result }) 
   const formatUsd = (n: number) =>
     `$${(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  // Category Sales Chart Data
+  // Category Sales Chart Data (filter zero)
   const categorySalesData = useMemo(() => {
-    return productTypeMetrics.map((c, i) => ({
-      name: c.productType,
-      salesAmount: c.salesAmount,
-      salesQty: c.salesQty,
-      salesSharePct: c.salesSharePct,
-      color: COLORS[i % COLORS.length]
-    }));
+    return productTypeMetrics
+      .filter(c => c.salesAmount > 0 || c.salesQty > 0)
+      .map((c, i) => ({
+        name: c.productType,
+        salesAmount: c.salesAmount,
+        salesQty: c.salesQty,
+        salesSharePct: c.salesSharePct,
+        color: COLORS[i % COLORS.length]
+      }));
   }, [productTypeMetrics]);
 
-  // SPU Top 10 Sales Chart Data
+  // SPU Top 10 Sales Chart Data (filter zero)
   const spuSalesData = useMemo(() => {
     return [...spuMetrics]
+      .filter(s => s.salesAmount > 0 || s.salesQty > 0)
       .sort((a, b) => b.salesAmount - a.salesAmount)
       .slice(0, 8)
       .map(s => ({
@@ -67,6 +72,32 @@ export const SalesAnalysisView: React.FC<SalesAnalysisViewProps> = ({ result }) 
         productType: s.productType
       }));
   }, [spuMetrics]);
+
+  // Sort Options
+  const sortOptions = useMemo<SortOption[]>(() => {
+    if (activeDimension === 'category') {
+      return [
+        { value: 'salesAmount', label: '销售额' },
+        { value: 'salesQty', label: '销售件数' },
+        { value: 'salesSharePct', label: '全店销售占比' },
+        { value: 'operatingProfit', label: '贡献利润额' }
+      ];
+    } else if (activeDimension === 'spu') {
+      return [
+        { value: 'salesAmount', label: '销售额' },
+        { value: 'salesQty', label: '销售件数' },
+        { value: 'spuSharePct', label: 'SPU销售占比' },
+        { value: 'daysOfSupply', label: '周转天数 (DOS)' }
+      ];
+    } else {
+      return [
+        { value: 'salesAmount', label: '销售额' },
+        { value: 'salesQty', label: '销售件数' },
+        { value: 'sellingPriceAvg', label: '平均售价' },
+        { value: 'availableInventory', label: '可用库存' }
+      ];
+    }
+  }, [activeDimension]);
 
   // Handle Sort
   const handleSort = (field: string) => {
@@ -80,42 +111,49 @@ export const SalesAnalysisView: React.FC<SalesAnalysisViewProps> = ({ result }) 
 
   const filteredCategoryData = useMemo(() => {
     return productTypeMetrics
-      .filter(c => c.productType.toLowerCase().includes(searchTerm.toLowerCase()))
+      .filter(c => {
+        if (hideZeroData && c.salesAmount === 0 && c.salesQty === 0) return false;
+        return c.productType.toLowerCase().includes(searchTerm.toLowerCase());
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [productTypeMetrics, searchTerm, sortField, sortDirection]);
+  }, [productTypeMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   const filteredSpuData = useMemo(() => {
     return spuMetrics
-      .filter(
-        s =>
+      .filter(s => {
+        if (hideZeroData && s.salesAmount === 0 && s.salesQty === 0) return false;
+        return (
           s.spu.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.productType.toLowerCase().includes(searchTerm.toLowerCase())
-      )
+        );
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [spuMetrics, searchTerm, sortField, sortDirection]);
+  }, [spuMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   const filteredSkuData = useMemo(() => {
     return skuMetrics
-      .filter(
-        s =>
+      .filter(s => {
+        if (hideZeroData && s.salesAmount === 0 && s.salesQty === 0) return false;
+        return (
           s.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.spu.toLowerCase().includes(searchTerm.toLowerCase())
-      )
+        );
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [skuMetrics, searchTerm, sortField, sortDirection]);
+  }, [skuMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   return (
     <div className="space-y-5 pb-12">
@@ -241,63 +279,30 @@ export const SalesAnalysisView: React.FC<SalesAnalysisViewProps> = ({ result }) 
 
       {/* 3-Dimensional Analysis Table Section */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 sm:p-5 space-y-4">
-        {/* Table Controls */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
-          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
-            <button
-              onClick={() => {
-                setActiveDimension('category');
-                setSortField('salesAmount');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'category'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              品类维度 (Category)
-            </button>
-            <button
-              onClick={() => {
-                setActiveDimension('spu');
-                setSortField('salesAmount');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'spu'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              SPU 维度
-            </button>
-            <button
-              onClick={() => {
-                setActiveDimension('sku');
-                setSortField('salesAmount');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'sku'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              SKU 细分维度
-            </button>
-          </div>
-
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder={`搜索${
-                activeDimension === 'category' ? '品类名称' : activeDimension === 'spu' ? 'SPU编码' : 'SKU/商品名'
-              }...`}
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="pl-8 pr-3 py-1.5 rounded-md border border-slate-200 text-xs bg-slate-50 focus:bg-white focus:outline-none focus:border-[#0071dc] w-56 font-mono"
-            />
-          </div>
-        </div>
+        {/* Table Controls via DimensionSortToolbar */}
+        <DimensionSortToolbar
+          activeDimension={activeDimension}
+          onDimensionChange={dim => {
+            setActiveDimension(dim);
+            setSortField('salesAmount');
+          }}
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          sortField={sortField}
+          onSortFieldChange={setSortField}
+          sortOptions={sortOptions}
+          sortDirection={sortDirection}
+          onToggleSortDirection={() => setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'))}
+          hideZeroData={hideZeroData}
+          onToggleHideZeroData={setHideZeroData}
+          totalCount={
+            activeDimension === 'category'
+              ? filteredCategoryData.length
+              : activeDimension === 'spu'
+              ? filteredSpuData.length
+              : filteredSkuData.length
+          }
+        />
 
         {/* Collapsible Table Content */}
         {activeDimension === 'category' && (

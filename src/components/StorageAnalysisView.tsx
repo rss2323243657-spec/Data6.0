@@ -24,6 +24,7 @@ import {
 } from 'recharts';
 import { AnalysisResult } from '../types';
 import { CollapsibleTableWrapper } from './CollapsibleTableWrapper';
+import { DimensionSortToolbar, SortOption } from './DimensionSortToolbar';
 
 interface StorageAnalysisViewProps {
   result: AnalysisResult;
@@ -36,6 +37,7 @@ export const StorageAnalysisView: React.FC<StorageAnalysisViewProps> = ({ result
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<string>('storageFeeUsd');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [hideZeroData, setHideZeroData] = useState<boolean>(true);
 
   const coreFinancials = result.coreFinancials || ({} as any);
   const skuMetrics = result.skuMetrics || [];
@@ -81,15 +83,43 @@ export const StorageAnalysisView: React.FC<StorageAnalysisViewProps> = ({ result
     ].filter(d => d.amount > 0);
   }, [coreFinancials, agingStorageLinkage]);
 
-  // Category Storage Chart Data
+  // Category Storage Chart Data (filtered)
   const categoryStorageChartData = useMemo(() => {
-    return productTypeMetrics.map((c, i) => ({
-      name: c.productType,
-      storageFeeUsd: c.storageFeeUsd,
-      salesAmount: c.salesAmount,
-      color: COLORS[i % COLORS.length]
-    }));
+    return productTypeMetrics
+      .filter(c => c.storageFeeUsd > 0 || c.salesAmount > 0)
+      .map((c, i) => ({
+        name: c.productType,
+        storageFeeUsd: c.storageFeeUsd,
+        salesAmount: c.salesAmount,
+        color: COLORS[i % COLORS.length]
+      }));
   }, [productTypeMetrics]);
+
+  // Sort Options
+  const sortOptions = useMemo<SortOption[]>(() => {
+    if (activeDimension === 'category') {
+      return [
+        { value: 'storageFeeUsd', label: '仓储费合计' },
+        { value: 'salesAmount', label: '销售额' },
+        { value: 'totalInventory', label: '在库总件数' }
+      ];
+    } else if (activeDimension === 'spu') {
+      return [
+        { value: 'storageFeeUsd', label: 'SPU 仓储费' },
+        { value: 'salesAmount', label: '销售额' },
+        { value: 'totalInventory', label: '总在库件数' },
+        { value: 'daysOfSupply', label: '周转天数 (DOS)' }
+      ];
+    } else {
+      return [
+        { value: 'storageFeeUsd', label: 'Final Storage Fee' },
+        { value: 'normalStorageFeeUsd', label: '基础仓储费' },
+        { value: 'storageFee365_450Usd', label: '365-450天仓储费' },
+        { value: 'storageFee450PlusUsd', label: '450天以上仓储费' },
+        { value: 'totalInventory', label: '总在库件数' }
+      ];
+    }
+  }, [activeDimension]);
 
   // Handle Sort
   const handleSort = (field: string) => {
@@ -103,42 +133,49 @@ export const StorageAnalysisView: React.FC<StorageAnalysisViewProps> = ({ result
 
   const filteredCategoryData = useMemo(() => {
     return productTypeMetrics
-      .filter(c => c.productType.toLowerCase().includes(searchTerm.toLowerCase()))
+      .filter(c => {
+        if (hideZeroData && c.storageFeeUsd === 0 && c.salesAmount === 0 && c.totalInventory === 0) return false;
+        return c.productType.toLowerCase().includes(searchTerm.toLowerCase());
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [productTypeMetrics, searchTerm, sortField, sortDirection]);
+  }, [productTypeMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   const filteredSpuData = useMemo(() => {
     return spuMetrics
-      .filter(
-        s =>
+      .filter(s => {
+        if (hideZeroData && s.storageFeeUsd === 0 && s.salesAmount === 0 && s.totalInventory === 0) return false;
+        return (
           s.spu.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.productType.toLowerCase().includes(searchTerm.toLowerCase())
-      )
+        );
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [spuMetrics, searchTerm, sortField, sortDirection]);
+  }, [spuMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   const filteredSkuData = useMemo(() => {
     return skuMetrics
-      .filter(
-        s =>
+      .filter(s => {
+        if (hideZeroData && s.storageFeeUsd === 0 && s.salesAmount === 0 && s.totalInventory === 0) return false;
+        return (
           s.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.spu.toLowerCase().includes(searchTerm.toLowerCase())
-      )
+        );
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [skuMetrics, searchTerm, sortField, sortDirection]);
+  }, [skuMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   return (
     <div className="space-y-5 pb-12">
@@ -268,63 +305,30 @@ export const StorageAnalysisView: React.FC<StorageAnalysisViewProps> = ({ result
 
       {/* 3-Dimensional Analysis Table Section */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 sm:p-5 space-y-4">
-        {/* Table Controls */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
-          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
-            <button
-              onClick={() => {
-                setActiveDimension('category');
-                setSortField('storageFeeUsd');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'category'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              品类维度 (Category)
-            </button>
-            <button
-              onClick={() => {
-                setActiveDimension('spu');
-                setSortField('storageFeeUsd');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'spu'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              SPU 维度 (单SKU之和)
-            </button>
-            <button
-              onClick={() => {
-                setActiveDimension('sku');
-                setSortField('storageFeeUsd');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'sku'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              SKU 细分 (Final storage fee)
-            </button>
-          </div>
-
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder={`搜索${
-                activeDimension === 'category' ? '品类名称' : activeDimension === 'spu' ? 'SPU编码' : 'SKU/商品名'
-              }...`}
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="pl-8 pr-3 py-1.5 rounded-md border border-slate-200 text-xs bg-slate-50 focus:bg-white focus:outline-none focus:border-[#0071dc] w-56 font-mono"
-            />
-          </div>
-        </div>
+        {/* Table Controls via DimensionSortToolbar */}
+        <DimensionSortToolbar
+          activeDimension={activeDimension}
+          onDimensionChange={dim => {
+            setActiveDimension(dim);
+            setSortField('storageFeeUsd');
+          }}
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          sortField={sortField}
+          onSortFieldChange={setSortField}
+          sortOptions={sortOptions}
+          sortDirection={sortDirection}
+          onToggleSortDirection={() => setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'))}
+          hideZeroData={hideZeroData}
+          onToggleHideZeroData={setHideZeroData}
+          totalCount={
+            activeDimension === 'category'
+              ? filteredCategoryData.length
+              : activeDimension === 'spu'
+              ? filteredSpuData.length
+              : filteredSkuData.length
+          }
+        />
 
         {/* Collapsible Table Content */}
         {activeDimension === 'category' && (
@@ -428,34 +432,59 @@ export const StorageAnalysisView: React.FC<StorageAnalysisViewProps> = ({ result
                     <th className="py-2.5 px-3 text-right cursor-pointer" onClick={() => handleSort('storageFeeUsd')}>
                       Final Storage Fee <ArrowUpDown className="w-3 h-3 inline ml-0.5 text-slate-400" />
                     </th>
-                    <th className="py-2.5 px-3 text-right">超365天滞销库存</th>
-                    <th className="py-2.5 px-3 text-right">总库存量</th>
-                    <th className="py-2.5 px-3 text-right">周转天数 (DOS)</th>
+                    <th className="py-2.5 px-3 text-right text-blue-700">基础仓储费</th>
+                    <th className="py-2.5 px-3 text-right text-amber-700">365-450天费</th>
+                    <th className="py-2.5 px-3 text-right text-rose-700">450天+超期费</th>
+                    <th className="py-2.5 px-3 text-center">勾稽误差批注</th>
+                    <th className="py-2.5 px-3 text-right">在库件数</th>
+                    <th className="py-2.5 px-3 text-right">超365天</th>
                     <th className="py-2.5 px-3">仓储失血诊断与建议</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono text-[11px]">
-                  {filteredSkuData.map((sku, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50">
-                      <td className="py-2.5 px-3 font-bold text-slate-900">{sku.sku}</td>
-                      <td className="py-2.5 px-3 text-slate-600 font-sans max-w-[180px] truncate">{sku.productName}</td>
-                      <td className="py-2.5 px-3 text-right font-bold text-slate-900">{formatUsd(sku.storageFeeUsd)}</td>
-                      <td className="py-2.5 px-3 text-right font-bold text-rose-600">
-                        {sku.age365Plus > 0 ? `${sku.age365Plus} 件` : '-'}
-                      </td>
-                      <td className="py-2.5 px-3 text-right text-slate-600">{sku.totalInventory}</td>
-                      <td className="py-2.5 px-3 text-right text-slate-600">{sku.daysOfSupply} 天</td>
-                      <td className="py-2.5 px-3 text-slate-600 font-sans text-xs">
-                        {sku.age365Plus > 50 || sku.storageFeeUsd > 300 ? (
-                          <span className="text-rose-600 font-medium">🚨 高库龄惩罚费重度侵蚀，建议限时清仓/退仓</span>
-                        ) : sku.daysOfSupply > 180 ? (
-                          <span className="text-amber-600 font-medium">⚠️ 周转滞缓，谨防恶化为超期罚金</span>
-                        ) : (
-                          <span className="text-emerald-600">健康周转</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {filteredSkuData.map((sku, idx) => {
+                    const normalFee = sku.normalStorageFeeUsd || 0;
+                    const fee365_450 = sku.storageFee365_450Usd || 0;
+                    const fee450Plus = sku.storageFee450PlusUsd || 0;
+                    const sumComponents = Number((normalFee + fee365_450 + fee450Plus).toFixed(2));
+                    const feeDiff = Math.abs(Number((sku.storageFeeUsd - sumComponents).toFixed(2)));
+                    const hasDiscrepancy = feeDiff > 1.0;
+
+                    return (
+                      <tr key={idx} className={`hover:bg-slate-50 ${hasDiscrepancy ? 'bg-amber-50/40' : ''}`}>
+                        <td className="py-2.5 px-3 font-bold text-slate-900">{sku.sku}</td>
+                        <td className="py-2.5 px-3 text-slate-600 font-sans max-w-[150px] truncate">{sku.productName}</td>
+                        <td className="py-2.5 px-3 text-right font-bold text-slate-900">{formatUsd(sku.storageFeeUsd)}</td>
+                        <td className="py-2.5 px-3 text-right text-blue-600">{formatUsd(normalFee)}</td>
+                        <td className="py-2.5 px-3 text-right text-amber-600">{formatUsd(fee365_450)}</td>
+                        <td className="py-2.5 px-3 text-right text-rose-600 font-bold">{formatUsd(fee450Plus)}</td>
+                        <td className="py-2.5 px-3 text-center">
+                          {hasDiscrepancy ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                              ⚠️ 误差 ${feeDiff.toFixed(2)}
+                            </span>
+                          ) : sku.storageFeeUsd > 0 ? (
+                            <span className="text-emerald-600 text-[10px] font-semibold">✓ 勾稽一致</span>
+                          ) : (
+                            <span className="text-slate-400 text-[10px]">-</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right text-slate-600">{sku.totalInventory}</td>
+                        <td className="py-2.5 px-3 text-right font-bold text-rose-600">
+                          {sku.age365Plus > 0 ? `${sku.age365Plus}` : '-'}
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-600 font-sans text-xs">
+                          {sku.age365Plus > 50 || sku.storageFeeUsd > 300 ? (
+                            <span className="text-rose-600 font-medium">🚨 高库龄超期费重度侵蚀，建议限时清仓/移除</span>
+                          ) : sku.daysOfSupply > 180 ? (
+                            <span className="text-amber-600 font-medium">⚠️ 周转滞缓，谨防恶化为超期罚金</span>
+                          ) : (
+                            <span className="text-emerald-600">健康良性</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

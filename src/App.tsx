@@ -32,7 +32,7 @@ import {
 } from './types';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
+  const [activeTab, setActiveTab] = useState<string>('sales');
   const [currentDataset, setCurrentDataset] = useState<RawUploadedData>(SAMPLE_RAW_DATASET);
   const [currentConfig, setCurrentConfig] = useState<ManualCostInput>(SAMPLE_CONFIG);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);

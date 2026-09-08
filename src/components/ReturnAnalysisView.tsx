@@ -5,11 +5,11 @@ import {
   HelpCircle,
   Package,
   Layers,
-  ArrowUpDown,
   Search,
   CheckCircle2,
   AlertTriangle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  ArrowUpDown
 } from 'lucide-react';
 import {
   PieChart,
@@ -26,6 +26,7 @@ import {
 } from 'recharts';
 import { AnalysisResult, SkuMetric, SpuMetric, ProductTypeMetric } from '../types';
 import { CollapsibleTableWrapper } from './CollapsibleTableWrapper';
+import { DimensionSortToolbar, SortOption } from './DimensionSortToolbar';
 
 interface ReturnAnalysisViewProps {
   result: AnalysisResult;
@@ -36,8 +37,9 @@ const COLORS = ['#ef4444', '#0071dc', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'
 export const ReturnAnalysisView: React.FC<ReturnAnalysisViewProps> = ({ result }) => {
   const [activeDimension, setActiveDimension] = useState<'category' | 'spu' | 'sku'>('category');
   const [searchTerm, setSearchTerm] = useState('');
-  const [sortField, setSortField] = useState<string>('returnQty');
+  const [sortField, setSortField] = useState<string>('returnAmount');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [hideZeroData, setHideZeroData] = useState<boolean>(true);
 
   const coreFinancials = result.coreFinancials || ({} as any);
   const skuMetrics = result.skuMetrics || [];
@@ -121,27 +123,60 @@ export const ReturnAnalysisView: React.FC<ReturnAnalysisViewProps> = ({ result }
     ];
   }, [returnBreakdown]);
 
-  // Chart 3: Category Return Share (品类退货占比)
+  // Chart 3: Category Return (品类退货金额与件数，过滤全零项)
   const categoryChartData = useMemo(() => {
-    return (returnBreakdown?.byCategory || []).map((c, i) => ({
-      name: c.category,
-      returnQty: c.returnQty,
-      returnAmount: c.returnAmount,
-      returnRatePct: c.returnRatePct,
-      color: COLORS[i % COLORS.length]
-    }));
-  }, [returnBreakdown]);
+    return productTypeMetrics
+      .filter(c => c.returnQty > 0 || c.returnAmount > 0)
+      .map((c, i) => ({
+        name: c.productType,
+        returnQty: c.returnQty,
+        returnAmount: c.returnAmount,
+        returnRatePct: c.returnRatePct,
+        color: COLORS[i % COLORS.length]
+      }))
+      .sort((a, b) => b.returnAmount - a.returnAmount);
+  }, [productTypeMetrics]);
 
-  // Chart 4: SPU Return Share (SPU 退货占比)
+  // Chart 4: SPU Return (SPU 退货排行，过滤全零项)
   const spuChartData = useMemo(() => {
-    return (returnBreakdown?.bySpu || []).slice(0, 8).map((s, i) => ({
-      name: s.spu,
-      returnQty: s.returnQty,
-      returnAmount: s.returnAmount,
-      returnRatePct: s.returnRatePct,
-      color: COLORS[i % COLORS.length]
-    }));
-  }, [returnBreakdown]);
+    return spuMetrics
+      .filter(s => s.returnQty > 0 || s.returnAmount > 0)
+      .sort((a, b) => b.returnQty - a.returnQty)
+      .slice(0, 8)
+      .map((s, i) => ({
+        name: s.spu,
+        returnQty: s.returnQty,
+        returnAmount: s.returnAmount,
+        returnRatePct: s.returnRate,
+        color: COLORS[i % COLORS.length]
+      }));
+  }, [spuMetrics]);
+
+  // Dimension-specific Sort Options
+  const sortOptions = useMemo<SortOption[]>(() => {
+    if (activeDimension === 'category') {
+      return [
+        { value: 'returnAmount', label: '退货总金额' },
+        { value: 'returnQty', label: '退货件数' },
+        { value: 'returnRatePct', label: '退货率 (%)' },
+        { value: 'salesQty', label: '总销量' }
+      ];
+    } else if (activeDimension === 'spu') {
+      return [
+        { value: 'returnAmount', label: '退货总金额' },
+        { value: 'returnQty', label: '退货件数' },
+        { value: 'returnRate', label: '退货率 (%)' },
+        { value: 'salesQty', label: '总销量' }
+      ];
+    } else {
+      return [
+        { value: 'returnAmount', label: '退货总金额' },
+        { value: 'returnQty', label: '退货件数' },
+        { value: 'returnRate', label: '退货率 (%)' },
+        { value: 'keepItLossUsd', label: 'Keep-It净亏损' }
+      ];
+    }
+  }, [activeDimension]);
 
   // Handle Sort
   const handleSort = (field: string) => {
@@ -156,42 +191,49 @@ export const ReturnAnalysisView: React.FC<ReturnAnalysisViewProps> = ({ result }
   // Filter and Sort Table Data
   const filteredCategoryData = useMemo(() => {
     return productTypeMetrics
-      .filter(c => c.productType.toLowerCase().includes(searchTerm.toLowerCase()))
+      .filter(c => {
+        if (hideZeroData && c.returnQty === 0 && c.returnAmount === 0 && c.salesQty === 0) return false;
+        return c.productType.toLowerCase().includes(searchTerm.toLowerCase());
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [productTypeMetrics, searchTerm, sortField, sortDirection]);
+  }, [productTypeMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   const filteredSpuData = useMemo(() => {
     return spuMetrics
-      .filter(
-        s =>
+      .filter(s => {
+        if (hideZeroData && s.returnQty === 0 && s.returnAmount === 0 && s.salesQty === 0) return false;
+        return (
           s.spu.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.productType.toLowerCase().includes(searchTerm.toLowerCase())
-      )
+        );
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [spuMetrics, searchTerm, sortField, sortDirection]);
+  }, [spuMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   const filteredSkuData = useMemo(() => {
     return skuMetrics
-      .filter(
-        s =>
+      .filter(s => {
+        if (hideZeroData && s.returnQty === 0 && s.returnAmount === 0 && s.salesQty === 0) return false;
+        return (
           s.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.spu.toLowerCase().includes(searchTerm.toLowerCase())
-      )
+        );
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [skuMetrics, searchTerm, sortField, sortDirection]);
+  }, [skuMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   return (
     <div className="space-y-5 pb-12">
@@ -349,30 +391,20 @@ export const ReturnAnalysisView: React.FC<ReturnAnalysisViewProps> = ({ result }
           <div className="flex items-center justify-between pb-2 border-b border-slate-100">
             <h3 className="text-xs font-bold text-slate-900 font-mono flex items-center">
               <Layers className="w-3.5 h-3.5 mr-1.5 text-indigo-500" />
-              3. 退货品类金额占比
+              3. 各品类退货金额分布
             </h3>
-            <span className="text-[10px] font-mono text-slate-400">Category Share</span>
+            <span className="text-[10px] font-mono text-slate-400">By Amount</span>
           </div>
-          <div className="h-48 w-full mt-2">
+          <div className="h-52 w-full mt-2">
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={categoryChartData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={36}
-                  outerRadius={65}
-                  paddingAngle={3}
-                  dataKey="returnAmount"
-                >
-                  {categoryChartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
+              <BarChart data={categoryChartData} margin={{ top: 10, right: 10, left: -10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#334155', fontWeight: 500 }} />
+                <YAxis tick={{ fontSize: 10, fill: '#64748b' }} tickFormatter={val => `$${val}`} />
                 <Tooltip
                   formatter={(val: any, name: any, item: any) => [
-                    `${formatUsd(Number(val))}`,
-                    item.payload.name
+                    `${formatUsd(Number(val))} (${item.payload.returnQty}件, 退货率: ${item.payload.returnRatePct}%)`,
+                    '退货金额'
                   ]}
                   contentStyle={{
                     backgroundColor: '#1e293b',
@@ -381,17 +413,20 @@ export const ReturnAnalysisView: React.FC<ReturnAnalysisViewProps> = ({ result }
                     fontSize: '11px'
                   }}
                 />
-              </PieChart>
+                <Bar dataKey="returnAmount" name="退货金额" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+              </BarChart>
             </ResponsiveContainer>
           </div>
           <div className="mt-auto space-y-1 pt-2 border-t border-slate-100 text-[11px] font-mono max-h-24 overflow-y-auto">
             {categoryChartData.map((item, idx) => (
               <div key={idx} className="flex items-center justify-between">
-                <span className="truncate max-w-[120px] text-slate-600 flex items-center">
+                <span className="text-slate-600 flex items-center">
                   <span className="w-2 h-2 rounded-full mr-1.5 shrink-0" style={{ backgroundColor: item.color }} />
                   {item.name}
                 </span>
-                <span className="font-bold text-slate-800">{formatUsd(item.returnAmount)}</span>
+                <span className="font-bold text-slate-800">
+                  {formatUsd(item.returnAmount)} ({item.returnQty}件)
+                </span>
               </div>
             ))}
           </div>
@@ -401,25 +436,27 @@ export const ReturnAnalysisView: React.FC<ReturnAnalysisViewProps> = ({ result }
         <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-xs flex flex-col">
           <div className="flex items-center justify-between pb-2 border-b border-slate-100">
             <h3 className="text-xs font-bold text-slate-900 font-mono flex items-center">
-              <Package className="w-3.5 h-3.5 mr-1.5 text-emerald-500" />
-              4. 退货 SPU TOP 排名
+              <Package className="w-3.5 h-3.5 mr-1.5 text-rose-500" />
+              4. 高退货 SPU 重点监控 (TOP)
             </h3>
             <span className="text-[10px] font-mono text-slate-400">By Qty</span>
           </div>
-          <div className="h-48 w-full mt-2">
+          <div className="h-52 w-full mt-2">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={spuChartData} layout="vertical" margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+              <BarChart data={spuChartData} layout="vertical" margin={{ top: 5, right: 15, left: 5, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
                 <XAxis type="number" tick={{ fontSize: 10, fill: '#64748b' }} />
                 <YAxis
                   dataKey="name"
                   type="category"
-                  tick={{ fontSize: 10, fill: '#334155' }}
-                  width={75}
-                  tickFormatter={val => (val.length > 10 ? `${val.substring(0, 8)}...` : val)}
+                  tick={{ fontSize: 11, fill: '#1e293b', fontWeight: 600 }}
+                  width={110}
                 />
                 <Tooltip
-                  formatter={(val: any) => [`${val} 件`, '退货数量']}
+                  formatter={(val: any, name: any, item: any) => [
+                    `${val} 件 (金额: ${formatUsd(item.payload.returnAmount)}, 退货率: ${item.payload.returnRatePct}%)`,
+                    '退货数量'
+                  ]}
                   contentStyle={{
                     backgroundColor: '#1e293b',
                     color: '#fff',
@@ -427,14 +464,14 @@ export const ReturnAnalysisView: React.FC<ReturnAnalysisViewProps> = ({ result }
                     fontSize: '11px'
                   }}
                 />
-                <Bar dataKey="returnQty" fill="#ef4444" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="returnQty" name="退货件数" fill="#ef4444" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
           <div className="mt-auto pt-2 border-t border-slate-100 text-[11px] font-mono text-slate-500 flex justify-between">
             <span>最高退货率 SPU:</span>
             <span className="font-bold text-rose-600">
-              {spuChartData[0]?.name || 'N/A'} ({spuChartData[0]?.returnRatePct || 0}%)
+              {spuChartData[0]?.name || '无异常'} ({spuChartData[0]?.returnRatePct || 0}%)
             </span>
           </div>
         </div>
@@ -442,65 +479,30 @@ export const ReturnAnalysisView: React.FC<ReturnAnalysisViewProps> = ({ result }
 
       {/* 3-Dimensional Analysis Table Section */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 sm:p-5 space-y-4">
-        {/* Table Controls */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
-          {/* Dimension Tabs: 品类 / SPU / SKU */}
-          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
-            <button
-              onClick={() => {
-                setActiveDimension('category');
-                setSortField('returnAmount');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'category'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              品类维度 (Category)
-            </button>
-            <button
-              onClick={() => {
-                setActiveDimension('spu');
-                setSortField('returnAmount');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'spu'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              SPU 维度
-            </button>
-            <button
-              onClick={() => {
-                setActiveDimension('sku');
-                setSortField('returnAmount');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'sku'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              SKU 细分维度
-            </button>
-          </div>
-
-          {/* Search Input */}
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder={`搜索${
-                activeDimension === 'category' ? '品类名称' : activeDimension === 'spu' ? 'SPU编码' : 'SKU/商品名'
-              }...`}
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="pl-8 pr-3 py-1.5 rounded-md border border-slate-200 text-xs bg-slate-50 focus:bg-white focus:outline-none focus:border-[#0071dc] w-56 font-mono"
-            />
-          </div>
-        </div>
+        {/* Table Controls via DimensionSortToolbar */}
+        <DimensionSortToolbar
+          activeDimension={activeDimension}
+          onDimensionChange={dim => {
+            setActiveDimension(dim);
+            setSortField('returnAmount');
+          }}
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          sortField={sortField}
+          onSortFieldChange={setSortField}
+          sortOptions={sortOptions}
+          sortDirection={sortDirection}
+          onToggleSortDirection={() => setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'))}
+          hideZeroData={hideZeroData}
+          onToggleHideZeroData={setHideZeroData}
+          totalCount={
+            activeDimension === 'category'
+              ? filteredCategoryData.length
+              : activeDimension === 'spu'
+              ? filteredSpuData.length
+              : filteredSkuData.length
+          }
+        />
 
         {/* Collapsible Table Content */}
         {activeDimension === 'category' && (

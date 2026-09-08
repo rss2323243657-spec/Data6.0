@@ -22,6 +22,7 @@ import {
 } from 'recharts';
 import { AnalysisResult } from '../types';
 import { CollapsibleTableWrapper } from './CollapsibleTableWrapper';
+import { DimensionSortToolbar, SortOption } from './DimensionSortToolbar';
 
 interface InventoryAnalysisViewProps {
   result: AnalysisResult;
@@ -32,6 +33,7 @@ export const InventoryAnalysisView: React.FC<InventoryAnalysisViewProps> = ({ re
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<string>('totalInventory');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [hideZeroData, setHideZeroData] = useState<boolean>(true);
 
   const coreFinancials = result.coreFinancials || ({} as any);
   const skuMetrics = result.skuMetrics || [];
@@ -50,26 +52,64 @@ export const InventoryAnalysisView: React.FC<InventoryAnalysisViewProps> = ({ re
     totalUnits: 0
   };
 
-  // Inventory Aging Tiers Chart Data
+  // Inventory Aging Tiers Chart Data: 6-Tier Walmart ATS Standard
   const agingChartData = useMemo(() => {
+    const total = inventoryAgingSummary.totalUnits || 1;
+    const q0_90 = inventoryAgingSummary.qty0_90 || ((inventoryAgingSummary.qty0_30 || 0) + (inventoryAgingSummary.qty31_90 || 0));
+    const q91_180 = inventoryAgingSummary.qty91_180 || 0;
+    const q181_270 = inventoryAgingSummary.qty181_270 || 0;
+    const q271_365 = inventoryAgingSummary.qty271_365 || 0;
+    const q365_450 = inventoryAgingSummary.qty365_450 || 0;
+    const q450Plus = inventoryAgingSummary.qty450Plus || 0;
+
     return [
-      { name: '0-30天', qty: inventoryAgingSummary.qty0_30 || 0, pct: inventoryAgingSummary.pct0_30 || 0, fill: '#10b981' },
-      { name: '31-90天', qty: inventoryAgingSummary.qty31_90 || 0, pct: inventoryAgingSummary.pct31_90 || 0, fill: '#3b82f6' },
-      { name: '91-180天', qty: inventoryAgingSummary.qty91_180 || 0, pct: inventoryAgingSummary.pct91_180 || 0, fill: '#8b5cf6' },
-      { name: '181-270天', qty: inventoryAgingSummary.qty181_270 || 0, pct: inventoryAgingSummary.pct181_270 || 0, fill: '#f59e0b' },
-      { name: '271-365天', qty: inventoryAgingSummary.qty271_365 || 0, pct: inventoryAgingSummary.pct271_365 || 0, fill: '#f97316' },
-      { name: '365天+', qty: inventoryAgingSummary.qty365Plus || 0, pct: inventoryAgingSummary.pct365Plus || 0, fill: '#ef4444' }
+      { name: '0-90天', qty: q0_90, pct: Number(((q0_90 / total) * 100).toFixed(1)), fill: '#10b981' },
+      { name: '91-180天', qty: q91_180, pct: Number(((q91_180 / total) * 100).toFixed(1)), fill: '#3b82f6' },
+      { name: '181-270天', qty: q181_270, pct: Number(((q181_270 / total) * 100).toFixed(1)), fill: '#8b5cf6' },
+      { name: '271-365天', qty: q271_365, pct: Number(((q271_365 / total) * 100).toFixed(1)), fill: '#f59e0b' },
+      { name: '366-450天', qty: q365_450, pct: Number(((q365_450 / total) * 100).toFixed(1)), fill: '#f97316' },
+      { name: '450天+', qty: q450Plus, pct: Number(((q450Plus / total) * 100).toFixed(1)), fill: '#ef4444' }
     ];
   }, [inventoryAgingSummary]);
 
-  // Category Inventory Chart Data
+  // Category Inventory Chart Data (filter out zero items)
   const categoryInventoryChartData = useMemo(() => {
-    return productTypeMetrics.map(c => ({
-      name: c.productType,
-      totalInventory: c.totalInventory,
-      salesQty: c.salesQty
-    }));
+    return productTypeMetrics
+      .filter(c => c.totalInventory > 0 || c.salesQty > 0)
+      .map(c => ({
+        name: c.productType,
+        totalInventory: c.totalInventory,
+        availableInventory: c.availableInventory,
+        salesQty: c.salesQty
+      }));
   }, [productTypeMetrics]);
+
+  // Sort Options
+  const sortOptions = useMemo<SortOption[]>(() => {
+    if (activeDimension === 'category') {
+      return [
+        { value: 'totalInventory', label: '在库库存' },
+        { value: 'availableInventory', label: '可售库存' },
+        { value: 'salesQty', label: '当月销量' },
+        { value: 'storageFeeUsd', label: '仓储费' }
+      ];
+    } else if (activeDimension === 'spu') {
+      return [
+        { value: 'totalInventory', label: '在库库存' },
+        { value: 'availableInventory', label: '可售件数' },
+        { value: 'daysOfSupply', label: '周转天数 (DOS)' },
+        { value: 'highAgingInventory', label: '超365天件数' }
+      ];
+    } else {
+      return [
+        { value: 'totalInventory', label: '总库存' },
+        { value: 'availableInventory', label: '可售件数' },
+        { value: 'daysOfSupply', label: '周转天数 (DOS)' },
+        { value: 'age0_90', label: '0-90天健康库龄' },
+        { value: 'age365Plus', label: '365天+滞销库龄' }
+      ];
+    }
+  }, [activeDimension]);
 
   // Handle Sort
   const handleSort = (field: string) => {
@@ -83,42 +123,49 @@ export const InventoryAnalysisView: React.FC<InventoryAnalysisViewProps> = ({ re
 
   const filteredCategoryData = useMemo(() => {
     return productTypeMetrics
-      .filter(c => c.productType.toLowerCase().includes(searchTerm.toLowerCase()))
+      .filter(c => {
+        if (hideZeroData && c.totalInventory === 0 && c.salesQty === 0 && c.availableInventory === 0) return false;
+        return c.productType.toLowerCase().includes(searchTerm.toLowerCase());
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [productTypeMetrics, searchTerm, sortField, sortDirection]);
+  }, [productTypeMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   const filteredSpuData = useMemo(() => {
     return spuMetrics
-      .filter(
-        s =>
+      .filter(s => {
+        if (hideZeroData && s.totalInventory === 0 && s.salesQty === 0) return false;
+        return (
           s.spu.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.productType.toLowerCase().includes(searchTerm.toLowerCase())
-      )
+        );
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [spuMetrics, searchTerm, sortField, sortDirection]);
+  }, [spuMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   const filteredSkuData = useMemo(() => {
     return skuMetrics
-      .filter(
-        s =>
+      .filter(s => {
+        if (hideZeroData && s.totalInventory === 0 && s.salesQty === 0 && s.availableInventory === 0) return false;
+        return (
           s.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.spu.toLowerCase().includes(searchTerm.toLowerCase())
-      )
+        );
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [skuMetrics, searchTerm, sortField, sortDirection]);
+  }, [skuMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   return (
     <div className="space-y-5 pb-12">
@@ -237,63 +284,30 @@ export const InventoryAnalysisView: React.FC<InventoryAnalysisViewProps> = ({ re
 
       {/* 3-Dimensional Analysis Table Section */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 sm:p-5 space-y-4">
-        {/* Table Controls */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
-          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
-            <button
-              onClick={() => {
-                setActiveDimension('category');
-                setSortField('totalInventory');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'category'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              品类维度 (Category)
-            </button>
-            <button
-              onClick={() => {
-                setActiveDimension('spu');
-                setSortField('totalInventory');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'spu'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              SPU 维度
-            </button>
-            <button
-              onClick={() => {
-                setActiveDimension('sku');
-                setSortField('totalInventory');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'sku'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              SKU 细分维度
-            </button>
-          </div>
-
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder={`搜索${
-                activeDimension === 'category' ? '品类名称' : activeDimension === 'spu' ? 'SPU编码' : 'SKU/商品名'
-              }...`}
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="pl-8 pr-3 py-1.5 rounded-md border border-slate-200 text-xs bg-slate-50 focus:bg-white focus:outline-none focus:border-[#0071dc] w-56 font-mono"
-            />
-          </div>
-        </div>
+        {/* Table Controls via DimensionSortToolbar */}
+        <DimensionSortToolbar
+          activeDimension={activeDimension}
+          onDimensionChange={dim => {
+            setActiveDimension(dim);
+            setSortField('totalInventory');
+          }}
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          sortField={sortField}
+          onSortFieldChange={setSortField}
+          sortOptions={sortOptions}
+          sortDirection={sortDirection}
+          onToggleSortDirection={() => setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'))}
+          hideZeroData={hideZeroData}
+          onToggleHideZeroData={setHideZeroData}
+          totalCount={
+            activeDimension === 'category'
+              ? filteredCategoryData.length
+              : activeDimension === 'spu'
+              ? filteredSpuData.length
+              : filteredSkuData.length
+          }
+        />
 
         {/* Collapsible Table Content */}
         {activeDimension === 'category' && (
@@ -370,7 +384,7 @@ export const InventoryAnalysisView: React.FC<InventoryAnalysisViewProps> = ({ re
                       <td className="py-2.5 px-3 text-right text-slate-600">{spu.availableInventory} 件</td>
                       <td className="py-2.5 px-3 text-right text-slate-600">{spu.reservedInventory} 件</td>
                       <td className="py-2.5 px-3 text-right font-bold">{spu.daysOfSupply} 天</td>
-                      <td className="py-2.5 px-3 text-right text-rose-600 font-bold">{spu.aging365Plus} 件</td>
+                      <td className="py-2.5 px-3 text-right text-rose-600 font-bold">{spu.highAgingInventory || spu.aging365Plus || 0} 件</td>
                     </tr>
                   ))}
                 </tbody>
@@ -388,12 +402,16 @@ export const InventoryAnalysisView: React.FC<InventoryAnalysisViewProps> = ({ re
                     <th className="py-2.5 px-3">SKU 编码</th>
                     <th className="py-2.5 px-3">商品名称</th>
                     <th className="py-2.5 px-3 text-right cursor-pointer" onClick={() => handleSort('totalInventory')}>
-                      总库存 <ArrowUpDown className="w-3 h-3 inline ml-0.5 text-slate-400" />
+                      在库总数 <ArrowUpDown className="w-3 h-3 inline ml-0.5 text-slate-400" />
                     </th>
                     <th className="py-2.5 px-3 text-right">可售</th>
                     <th className="py-2.5 px-3 text-right">周转DOS</th>
-                    <th className="py-2.5 px-3 text-right">0-90天 (健康)</th>
-                    <th className="py-2.5 px-3 text-right">365天+ (滞销)</th>
+                    <th className="py-2.5 px-3 text-right text-emerald-700">0-90天</th>
+                    <th className="py-2.5 px-3 text-right text-blue-700">91-180天</th>
+                    <th className="py-2.5 px-3 text-right text-purple-700">181-270天</th>
+                    <th className="py-2.5 px-3 text-right text-amber-700">271-365天</th>
+                    <th className="py-2.5 px-3 text-right text-orange-700">366-450天</th>
+                    <th className="py-2.5 px-3 text-right text-rose-700">450天+</th>
                     <th className="py-2.5 px-3">库存健康诊断状态</th>
                   </tr>
                 </thead>
@@ -401,16 +419,20 @@ export const InventoryAnalysisView: React.FC<InventoryAnalysisViewProps> = ({ re
                   {filteredSkuData.map((sku, idx) => (
                     <tr key={idx} className="hover:bg-slate-50">
                       <td className="py-2.5 px-3 font-bold text-slate-900">{sku.sku}</td>
-                      <td className="py-2.5 px-3 text-slate-600 font-sans max-w-[180px] truncate">{sku.productName}</td>
+                      <td className="py-2.5 px-3 text-slate-600 font-sans max-w-[160px] truncate">{sku.productName}</td>
                       <td className="py-2.5 px-3 text-right font-bold text-slate-900">{sku.totalInventory}</td>
                       <td className="py-2.5 px-3 text-right text-slate-600">{sku.availableInventory}</td>
                       <td className="py-2.5 px-3 text-right font-bold">{sku.daysOfSupply} 天</td>
-                      <td className="py-2.5 px-3 text-right text-emerald-600">{sku.age0_30 + sku.age31_90}</td>
-                      <td className="py-2.5 px-3 text-right text-rose-600 font-bold">{sku.age365Plus > 0 ? sku.age365Plus : '-'}</td>
+                      <td className="py-2.5 px-3 text-right text-emerald-600 font-medium">{sku.age0_90 || 0}</td>
+                      <td className="py-2.5 px-3 text-right text-blue-600">{sku.age91_180 || 0}</td>
+                      <td className="py-2.5 px-3 text-right text-purple-600">{sku.age181_270 || 0}</td>
+                      <td className="py-2.5 px-3 text-right text-amber-600">{sku.age271_365 || 0}</td>
+                      <td className="py-2.5 px-3 text-right text-orange-600 font-medium">{sku.age365_450 || 0}</td>
+                      <td className="py-2.5 px-3 text-right text-rose-600 font-bold">{sku.age450Plus || (sku.age365Plus > 0 ? sku.age365Plus : 0)}</td>
                       <td className="py-2.5 px-3 text-slate-600 font-sans text-xs">
                         {sku.availableInventory < 15 && sku.salesQty > 20 ? (
                           <span className="text-rose-600 font-bold">🚨 现货告急 (即将断货)</span>
-                        ) : sku.age365Plus > 50 ? (
+                        ) : (sku.age450Plus || 0) > 0 || (sku.age365_450 || 0) > 0 || sku.age365Plus > 50 ? (
                           <span className="text-rose-600 font-bold">⚠️ 严重滞销压仓 (需促销清仓)</span>
                         ) : sku.daysOfSupply > 150 ? (
                           <span className="text-amber-600 font-medium">📦 动销迟缓 (控制补货)</span>

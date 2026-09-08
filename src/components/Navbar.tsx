@@ -49,14 +49,14 @@ export const Navbar: React.FC<NavbarProps> = ({
     }
   };
 
-  // Dedicated sections for each domain with report at the very end
+  // Ordered per user requirements: 销售与退货在前，库存与仓储在后，广告次之，剩余其他再次之
   const navItems = [
-    { id: 'dashboard', label: '经营全景看板', icon: TrendingUp },
     { id: 'sales', label: '销售数据分析', icon: DollarSign },
-    { id: 'ads', label: '广告数据分析', icon: Sparkles },
+    { id: 'returns', label: '退货数据分析', icon: RotateCcw },
     { id: 'inventory', label: '库存数据分析', icon: Boxes },
     { id: 'storage', label: '仓储数据分析', icon: Warehouse },
-    { id: 'returns', label: '退货数据分析', icon: RotateCcw },
+    { id: 'ads', label: '广告数据分析', icon: Sparkles },
+    { id: 'dashboard', label: '经营全景看板', icon: TrendingUp },
     { id: 'profit', label: 'SKU/SPU 盈利四象限', icon: PieChart },
     { id: 'linkage', label: '五大跨模块联动', icon: GitMerge },
     { id: 'report', label: '月度综合诊断报告', icon: FileText },

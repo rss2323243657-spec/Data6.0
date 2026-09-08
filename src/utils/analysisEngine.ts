@@ -287,8 +287,7 @@ export function runComprehensiveAnalysis(
   // ==========================================
   // 3. INVENTORY AGING SUMMARY (Pre-computed for Core Metrics)
   // ==========================================
-  let totalUnits0_30 = 0;
-  let totalUnits31_90 = 0;
+  let totalUnits0_90 = 0;
   let totalUnits91_180 = 0;
   let totalUnits181_270 = 0;
   let totalUnits271_365 = 0;
@@ -297,8 +296,8 @@ export function runComprehensiveAnalysis(
   let totalInvStock = 0;
 
   for (const inv of inventoryHealth) {
-    totalUnits0_30 += inv.age0_30 || 0;
-    totalUnits31_90 += inv.age31_90 || 0;
+    const age0_90_val = inv.age0_90 !== undefined && inv.age0_90 > 0 ? inv.age0_90 : ((inv.age0_30 || 0) + (inv.age31_90 || 0));
+    totalUnits0_90 += age0_90_val;
     totalUnits91_180 += inv.age91_180 || 0;
     totalUnits181_270 += inv.age181_270 || 0;
     totalUnits271_365 += inv.age271_365 || 0;
@@ -307,7 +306,8 @@ export function runComprehensiveAnalysis(
     totalInvStock += (inv.availableInventory || inv.totalInventory || 0);
   }
 
-  const totalUnits0_90 = totalUnits0_30 + totalUnits31_90;
+  const totalUnits0_30 = Math.round(totalUnits0_90 / 3);
+  const totalUnits31_90 = totalUnits0_90 - totalUnits0_30;
   const totalUnits365Plus = totalUnits365_450 + totalUnits450Plus;
   const allInvUnits = totalUnits0_90 + totalUnits91_180 + totalUnits181_270 + totalUnits271_365 + totalUnits365Plus || totalInvStock || 0;
   const dailySalesVelocity = salesUnits / 30;
@@ -634,14 +634,28 @@ export function runComprehensiveAnalysis(
     // Storage for this SKU/Item
     const matchingStorageRows = storageByProduct.get(key) || [];
     let normalStorageFeeUsd = 0;
+    let storageFee365_450Usd = 0;
+    let storageFee450PlusUsd = 0;
     let highAgingStorageFeeUsd = 0;
     let storageFeeUsd = 0;
+    let storageFeeDiscrepancy: number | undefined;
+    let storageFeeDiscrepancyNote: string | undefined;
+
     for (const st of matchingStorageRows) {
       normalStorageFeeUsd += st.normalStorageFee || 0;
+      storageFee365_450Usd += st.storageFee365_450 || 0;
+      storageFee450PlusUsd += st.storageFee450Plus || 0;
       highAgingStorageFeeUsd += (st.storageFee365_450 || 0) + (st.storageFee450Plus || 0);
-      storageFeeUsd += (st.totalStorageFee || (st.normalStorageFee + (st.storageFee365_450 || 0) + (st.storageFee450Plus || 0)));
+      // User requirement 7: 统计总计仓储费时直接使用Final storage fee
+      storageFeeUsd += (st.totalStorageFee > 0 ? st.totalStorageFee : (st.normalStorageFee + (st.storageFee365_450 || 0) + (st.storageFee450Plus || 0)));
+      if (st.storageFeeDiscrepancyNote) {
+        storageFeeDiscrepancyNote = st.storageFeeDiscrepancyNote;
+        storageFeeDiscrepancy = st.storageFeeDiscrepancy;
+      }
     }
     normalStorageFeeUsd = Number(normalStorageFeeUsd.toFixed(2));
+    storageFee365_450Usd = Number(storageFee365_450Usd.toFixed(2));
+    storageFee450PlusUsd = Number(storageFee450PlusUsd.toFixed(2));
     highAgingStorageFeeUsd = Number(highAgingStorageFeeUsd.toFixed(2));
     storageFeeUsd = Number(storageFeeUsd.toFixed(2));
 
@@ -650,12 +664,23 @@ export function runComprehensiveAnalysis(
     let totalInventory = 0;
     let availableInventory = 0;
     let age0_90 = 0;
+    let age91_180 = 0;
+    let age181_270 = 0;
+    let age271_365 = 0;
+    let age365_450 = 0;
+    let age450Plus = 0;
     let age91_365 = 0;
     let age365Plus = 0;
     for (const inv of matchingInvRows) {
       totalInventory += inv.totalInventory || 0;
       availableInventory += inv.availableInventory || 0;
-      age0_90 += (inv.age0_30 || 0) + (inv.age31_90 || 0);
+      const a0_90 = inv.age0_90 !== undefined && inv.age0_90 > 0 ? inv.age0_90 : ((inv.age0_30 || 0) + (inv.age31_90 || 0));
+      age0_90 += a0_90;
+      age91_180 += inv.age91_180 || 0;
+      age181_270 += inv.age181_270 || 0;
+      age271_365 += inv.age271_365 || 0;
+      age365_450 += inv.age365_450 || 0;
+      age450Plus += inv.age450Plus || 0;
       age91_365 += (inv.age91_180 || 0) + (inv.age181_270 || 0) + (inv.age271_365 || 0);
       age365Plus += (inv.age365_450 || 0) + (inv.age450Plus || 0);
     }
@@ -778,7 +803,11 @@ export function runComprehensiveAnalysis(
       headFreightUsd,
       storageFeeUsd,
       normalStorageFeeUsd,
+      storageFee365_450Usd,
+      storageFee450PlusUsd,
       highAgingStorageFeeUsd,
+      storageFeeDiscrepancy,
+      storageFeeDiscrepancyNote,
       returnQty,
       returnAmount,
       returnRate,
@@ -791,6 +820,11 @@ export function runComprehensiveAnalysis(
       totalInventory,
       availableInventory,
       age0_90,
+      age91_180,
+      age181_270,
+      age271_365,
+      age365_450,
+      age450Plus,
       age91_365,
       age365Plus,
       daysOfSupply,
@@ -1126,18 +1160,18 @@ export function runComprehensiveAnalysis(
       physicalAmount: Number(physicalAmtSum.toFixed(2)),
       physicalPct: Number(((physicalQtyCount / (keepItQtyCount + physicalQtyCount || 1)) * 100).toFixed(1)),
     },
-    byCategory: Array.from(catReturnMap.entries()).map(([category, val]) => ({
-      category,
-      returnQty: val.qty,
-      returnAmount: Number(val.amt.toFixed(2)),
-      returnRatePct: val.salesQty > 0 ? Number(((val.qty / val.salesQty) * 100).toFixed(2)) : 0
-    })).sort((a, b) => b.returnQty - a.returnQty),
-    bySpu: Array.from(spuReturnMap.entries()).map(([spu, val]) => ({
-      spu,
-      returnQty: val.qty,
-      returnAmount: Number(val.amt.toFixed(2)),
-      returnRatePct: val.salesQty > 0 ? Number(((val.qty / val.salesQty) * 100).toFixed(2)) : 0
-    })).sort((a, b) => b.returnQty - a.returnQty)
+    byCategory: productTypeMetrics.map(c => ({
+      category: c.productType,
+      returnQty: c.returnQty,
+      returnAmount: c.returnAmount,
+      returnRatePct: c.returnRatePct
+    })).filter(c => c.returnQty > 0 || c.returnAmount > 0).sort((a, b) => b.returnQty - a.returnQty),
+    bySpu: spuMetrics.map(s => ({
+      spu: s.spu,
+      returnQty: s.returnQty,
+      returnAmount: s.returnAmount,
+      returnRatePct: s.returnRate
+    })).filter(s => s.returnQty > 0 || s.returnAmount > 0).sort((a, b) => b.returnQty - a.returnQty)
   };
 
   // ==========================================

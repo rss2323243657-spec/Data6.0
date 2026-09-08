@@ -21,6 +21,7 @@ import {
 } from 'recharts';
 import { AnalysisResult } from '../types';
 import { CollapsibleTableWrapper } from './CollapsibleTableWrapper';
+import { DimensionSortToolbar, SortOption } from './DimensionSortToolbar';
 
 interface AdAnalysisViewProps {
   result: AnalysisResult;
@@ -31,25 +32,29 @@ export const AdAnalysisView: React.FC<AdAnalysisViewProps> = ({ result }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<string>('adSpend');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [hideZeroData, setHideZeroData] = useState<boolean>(true);
 
   const { coreFinancials, skuMetrics, spuMetrics, productTypeMetrics } = result;
 
   const formatUsd = (n: number) =>
     `$${(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  // Category Ad Chart Data (Spend vs Sales)
+  // Category Ad Chart Data (Spend vs Sales, filter zero)
   const categoryAdChartData = useMemo(() => {
-    return productTypeMetrics.map(c => ({
-      name: c.productType,
-      adSpend: c.adSpend,
-      adSales: c.adSales,
-      roas: c.roas
-    }));
+    return productTypeMetrics
+      .filter(c => c.adSpend > 0 || c.adSales > 0)
+      .map(c => ({
+        name: c.productType,
+        adSpend: c.adSpend,
+        adSales: c.adSales,
+        roas: c.roas
+      }));
   }, [productTypeMetrics]);
 
-  // SPU Ad Chart Data
+  // SPU Ad Chart Data (filter zero)
   const spuAdChartData = useMemo(() => {
     return [...spuMetrics]
+      .filter(s => s.adSpend > 0 || s.adSales > 0)
       .sort((a, b) => b.adSpend - a.adSpend)
       .slice(0, 8)
       .map(s => ({
@@ -59,6 +64,35 @@ export const AdAnalysisView: React.FC<AdAnalysisViewProps> = ({ result }) => {
         roas: s.roas
       }));
   }, [spuMetrics]);
+
+  // Sort Options
+  const sortOptions = useMemo<SortOption[]>(() => {
+    if (activeDimension === 'category') {
+      return [
+        { value: 'adSpend', label: '广告支出' },
+        { value: 'adSales', label: '归因销售额' },
+        { value: 'roas', label: 'ROAS 投产比' },
+        { value: 'acos', label: 'ACOS 广告占比' }
+      ];
+    } else if (activeDimension === 'spu') {
+      return [
+        { value: 'adSpend', label: '广告支出' },
+        { value: 'adSales', label: '归因销售额' },
+        { value: 'roas', label: 'ROAS 投产比' },
+        { value: 'adOrders', label: '广告订单数' },
+        { value: 'acos', label: 'ACOS 广告占比' }
+      ];
+    } else {
+      return [
+        { value: 'adSpend', label: '广告支出' },
+        { value: 'adSales', label: '归因销售额' },
+        { value: 'roas', label: 'ROAS 投产比' },
+        { value: 'ctr', label: '点击率 (CTR)' },
+        { value: 'cpc', label: '单次点击花费 (CPC)' },
+        { value: 'availableInventory', label: '在库库存' }
+      ];
+    }
+  }, [activeDimension]);
 
   // Handle Sort
   const handleSort = (field: string) => {
@@ -72,42 +106,49 @@ export const AdAnalysisView: React.FC<AdAnalysisViewProps> = ({ result }) => {
 
   const filteredCategoryData = useMemo(() => {
     return productTypeMetrics
-      .filter(c => c.productType.toLowerCase().includes(searchTerm.toLowerCase()))
+      .filter(c => {
+        if (hideZeroData && c.adSpend === 0 && c.adSales === 0) return false;
+        return c.productType.toLowerCase().includes(searchTerm.toLowerCase());
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [productTypeMetrics, searchTerm, sortField, sortDirection]);
+  }, [productTypeMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   const filteredSpuData = useMemo(() => {
     return spuMetrics
-      .filter(
-        s =>
+      .filter(s => {
+        if (hideZeroData && s.adSpend === 0 && s.adSales === 0) return false;
+        return (
           s.spu.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.productType.toLowerCase().includes(searchTerm.toLowerCase())
-      )
+        );
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [spuMetrics, searchTerm, sortField, sortDirection]);
+  }, [spuMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   const filteredSkuData = useMemo(() => {
     return skuMetrics
-      .filter(
-        s =>
+      .filter(s => {
+        if (hideZeroData && s.adSpend === 0 && s.adSales === 0) return false;
+        return (
           s.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
           s.spu.toLowerCase().includes(searchTerm.toLowerCase())
-      )
+        );
+      })
       .sort((a, b) => {
         const valA = (a as any)[sortField] ?? 0;
         const valB = (b as any)[sortField] ?? 0;
         return sortDirection === 'desc' ? valB - valA : valA - valB;
       });
-  }, [skuMetrics, searchTerm, sortField, sortDirection]);
+  }, [skuMetrics, searchTerm, sortField, sortDirection, hideZeroData]);
 
   return (
     <div className="space-y-5 pb-12">
@@ -222,63 +263,30 @@ export const AdAnalysisView: React.FC<AdAnalysisViewProps> = ({ result }) => {
 
       {/* 3-Dimensional Analysis Table Section */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 sm:p-5 space-y-4">
-        {/* Table Controls */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-200">
-          <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
-            <button
-              onClick={() => {
-                setActiveDimension('category');
-                setSortField('adSpend');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'category'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              品类维度 (Category)
-            </button>
-            <button
-              onClick={() => {
-                setActiveDimension('spu');
-                setSortField('adSpend');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'spu'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              SPU 维度
-            </button>
-            <button
-              onClick={() => {
-                setActiveDimension('sku');
-                setSortField('adSpend');
-              }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeDimension === 'sku'
-                  ? 'bg-white text-[#0071dc] font-bold shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              SKU 细分维度
-            </button>
-          </div>
-
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              placeholder={`搜索${
-                activeDimension === 'category' ? '品类名称' : activeDimension === 'spu' ? 'SPU编码' : 'SKU/商品名'
-              }...`}
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-              className="pl-8 pr-3 py-1.5 rounded-md border border-slate-200 text-xs bg-slate-50 focus:bg-white focus:outline-none focus:border-[#0071dc] w-56 font-mono"
-            />
-          </div>
-        </div>
+        {/* Table Controls via DimensionSortToolbar */}
+        <DimensionSortToolbar
+          activeDimension={activeDimension}
+          onDimensionChange={dim => {
+            setActiveDimension(dim);
+            setSortField('adSpend');
+          }}
+          searchTerm={searchTerm}
+          onSearchChange={setSearchTerm}
+          sortField={sortField}
+          onSortFieldChange={setSortField}
+          sortOptions={sortOptions}
+          sortDirection={sortDirection}
+          onToggleSortDirection={() => setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'))}
+          hideZeroData={hideZeroData}
+          onToggleHideZeroData={setHideZeroData}
+          totalCount={
+            activeDimension === 'category'
+              ? filteredCategoryData.length
+              : activeDimension === 'spu'
+              ? filteredSpuData.length
+              : filteredSkuData.length
+          }
+        />
 
         {/* Collapsible Table Content */}
         {activeDimension === 'category' && (

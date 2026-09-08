@@ -25,13 +25,14 @@ export interface InventoryHealthRow {
   availableInventory: number;
   reservedInventory: number;
   inboundInventory: number;
-  age0_30: number;
-  age31_90: number;
-  age91_180: number;
-  age181_270: number;
-  age271_365: number;
-  age365_450: number;
-  age450Plus: number;
+  age0_90?: number; // ATS 0-90 days
+  age0_30?: number;
+  age31_90?: number;
+  age91_180: number; // ATS 91-180 days
+  age181_270: number; // ATS 181-270 days
+  age271_365: number; // ATS 271-365 days
+  age365_450: number; // ATS 366-450 days
+  age450Plus: number; // ATS 450+ days
   rawRow?: Record<string, any>;
 }
 
@@ -39,10 +40,12 @@ export interface StorageFeeRow {
   sku?: string;
   itemId?: string;
   spu?: string;
-  normalStorageFee: number;
-  storageFee365_450: number;
-  storageFee450Plus: number;
-  totalStorageFee: number;
+  normalStorageFee: number; // 基础仓储费
+  storageFee365_450: number; // 365-450天仓储费
+  storageFee450Plus: number; // 450天以上仓储费
+  totalStorageFee: number; // Final storage fee
+  storageFeeDiscrepancy?: number;
+  storageFeeDiscrepancyNote?: string;
   rawRow?: Record<string, any>;
 }
 
@@ -147,7 +150,11 @@ export interface SkuMetric {
   headFreightUsd: number;
   storageFeeUsd: number;
   normalStorageFeeUsd: number;
+  storageFee365_450Usd: number;
+  storageFee450PlusUsd: number;
   highAgingStorageFeeUsd: number;
+  storageFeeDiscrepancy?: number;
+  storageFeeDiscrepancyNote?: string;
   returnQty: number;
   returnAmount: number;
   returnRate: number;
@@ -162,6 +169,11 @@ export interface SkuMetric {
   totalInventory: number;
   availableInventory: number;
   age0_90: number;
+  age91_180?: number;
+  age181_270?: number;
+  age271_365?: number;
+  age365_450?: number;
+  age450Plus?: number;
   age91_365: number;
   age365Plus: number;
   daysOfSupply: number;

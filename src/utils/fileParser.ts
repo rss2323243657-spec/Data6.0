@@ -211,17 +211,10 @@ export function parseInventoryHealth(rows: Record<string, any>[]): InventoryHeal
     const reservedInventory = parseNum(findField(r, ['reserved', '预留库存', '锁定库存', 'reserved units']));
     const inboundInventory = parseNum(findField(r, ['inbound', '在途', '在途库存', '在途数量', 'inbound units']));
 
-    // User requirement:
-    // 365天以内库存数 = ATS 0-90 days + ATS 91-180 days + ATS 181-270 days + ATS 271-365 days
-    // 365-450天 = ATS 366-450 days 字段
-    // 450天以上 = ATS 450+ days 字段
+    // User requirement 4: 沃尔玛的库龄梯队识别字段
+    // ATS 0-90 days, ATS 91-180 days, ATS 181-270 days, ATS 271-365 days, ATS 366-450 days, ATS 450+ days
+    // 也就是字段的字面意思：0-90天，91-180天，181-270天，271-365天，365-450天，450天以上
     const age0_90 = parseNum(findField(r, ['ats 0-90 days', 'ats 0-90', 'ats 0 to 90 days', '0-90 days', '0-90', '0-90天']));
-    const age0_30 = parseNum(findField(r, ['0-30', '0 to 30', '0-30天', 'age 0-30', 'ats 0-30']));
-    const age31_90 = parseNum(findField(r, ['31-90', '31 to 90', '31-90天', 'age 31-90', 'ats 31-90']));
-    
-    const finalAge0_30 = age0_30 || (age0_90 > 0 ? Math.round(age0_90 / 3) : 0);
-    const finalAge31_90 = age31_90 || (age0_90 > 0 ? (age0_90 - finalAge0_30) : 0);
-
     const age91_180 = parseNum(findField(r, ['ats 91-180 days', 'ats 91-180', 'ats 91 to 180 days', '91-180 days', '91-180', '91-180天', 'age 91-180']));
     const age181_270 = parseNum(findField(r, ['ats 181-270 days', 'ats 181-270', 'ats 181 to 270 days', '181-270 days', '181-270', '181-270天', 'age 181-270']));
     const age271_365 = parseNum(findField(r, ['ats 271-365 days', 'ats 271-365', 'ats 271 to 365 days', '271-365 days', '271-365', '271-365天', 'age 271-365']));
@@ -235,8 +228,10 @@ export function parseInventoryHealth(rows: Record<string, any>[]): InventoryHeal
       'ats 450+ days', 'ats 450+', 'ats >450 days', '450+ days', '450+', '450 +', '450天以上', '450+天', 'age 450+'
     ]));
 
+    const atsSum = age0_90 + age91_180 + age181_270 + age271_365 + age365_450 + age450Plus;
+
     // Total in-stock inventory: primarily Available Units as specified
-    const totalInventory = availableInventory > 0 ? availableInventory : (totalInventoryRaw || (availableInventory + reservedInventory));
+    const totalInventory = availableInventory > 0 ? availableInventory : (totalInventoryRaw || atsSum || (availableInventory + reservedInventory));
 
     return {
       sku,
@@ -245,8 +240,9 @@ export function parseInventoryHealth(rows: Record<string, any>[]): InventoryHeal
       availableInventory: availableInventory || totalInventory,
       reservedInventory,
       inboundInventory,
-      age0_30: finalAge0_30,
-      age31_90: finalAge31_90,
+      age0_90,
+      age0_30: 0,
+      age31_90: 0,
       age91_180,
       age181_270,
       age271_365,
@@ -262,7 +258,7 @@ export function parseStorageFees(rows: Record<string, any>[]): StorageFeeRow[] {
     const sku = String(findField(r, ['sku', 'seller sku', '商家sku', 'product sku', 'item sku', 'seller_sku']) || '').trim();
     const itemId = String(findField(r, ['item id', 'itemid', '商品id', 'walmart item id', 'partner item id']) || '').trim();
     
-    // Exact user requirement: directly recognize Final storage fee field for single SKU
+    // User requirement 7: Final storage fee 指的是当月总仓储费，直接用于统计总仓储费
     const finalStorageFee = parseNum(findField(r, [
       'final storage fee',
       'final_storage_fee',
@@ -277,23 +273,121 @@ export function parseStorageFees(rows: Record<string, any>[]): StorageFeeRow[] {
       'total fee',
       'storage fee'
     ]));
-    
-    const normalStorageFee = parseNum(findField(r, ['normal storage fee', 'base storage', '常规仓储费', '正常仓储费', '月度仓储费']));
-    const storageFee365_450 = parseNum(findField(r, ['365-450 days storage fee', '365-450 fee', '365-450天仓储费', '365-450仓储费', '365-450']));
-    const storageFee450Plus = parseNum(findField(r, ['450+ days storage fee', '450+ fee', '450天以上仓储费', '450+仓储费', '超期仓储费', '450+']));
 
-    let totalStorageFee = finalStorageFee;
-    if (!totalStorageFee) {
-      totalStorageFee = normalStorageFee + storageFee365_450 + storageFee450Plus;
+    // Component calculation according to user rules:
+    // 1. Days in report period
+    const reportDays = parseNum(findField(r, [
+      'days in report period',
+      'days in reporting period',
+      'report period days',
+      'reporting period days',
+      'days in period',
+      'report days',
+      'period days',
+      '核算天数',
+      '天数'
+    ])) || 30;
+
+    // 2. Standard daily storage fee per unit & Standard: average daily units available
+    const stdDailyFee = parseNum(findField(r, [
+      'standard: daily storage fee per unit',
+      'standard daily storage fee per unit',
+      'standard: daily storage fee',
+      'daily storage fee per unit',
+      'standard storage fee per unit',
+      'standard unit fee',
+      '标准单位每日仓储费',
+      '基础每日费率'
+    ]));
+    const stdAvgUnits = parseNum(findField(r, [
+      'standard: average daily units available',
+      'standard average daily units available',
+      'standard: average daily units',
+      'average daily units available',
+      'standard avg units',
+      'standard units',
+      '标准日均可用库存',
+      '基础日均在库'
+    ]));
+
+    // 3. Long-term (366-450 days) fee per unit & units
+    const lt365DailyFee = parseNum(findField(r, [
+      'long-term (366-450 days): daily storage fee per unit',
+      'long-term (366-450 days) daily storage fee per unit',
+      'long term (366-450 days): daily storage fee per unit',
+      '366-450 daily storage fee per unit',
+      '366-450 daily fee',
+      '365-450 daily fee',
+      '366-450天每日费率'
+    ]));
+    const lt365AvgUnits = parseNum(findField(r, [
+      'long-term (366-450 days): average daily units available',
+      'long-term (366-450 days) average daily units available',
+      'long term (366-450 days): average daily units available',
+      '366-450 average daily units available',
+      '366-450 avg units',
+      '365-450 avg units',
+      '366-450天日均在库'
+    ]));
+
+    // 4. 450+ days units
+    const lt450AvgUnits = parseNum(findField(r, [
+      'long-term (450+ days): average daily units available',
+      'long-term (450+ days) average daily units available',
+      'long term (450+ days): average daily units available',
+      '450+ average daily units available',
+      '450+ avg units',
+      '450+天日均在库'
+    ]));
+
+    // Direct pre-calculated fee fallbacks if components are not present
+    const rawNormalFee = parseNum(findField(r, ['normal storage fee', 'base storage', '常规仓储费', '正常仓储费', '月度仓储费', '基础仓储费']));
+    const rawFee365_450 = parseNum(findField(r, ['365-450 days storage fee', '366-450 days storage fee', '365-450 fee', '365-450天仓储费', '366-450仓储费']));
+    const rawFee450Plus = parseNum(findField(r, ['450+ days storage fee', '450+ fee', '450天以上仓储费', '450+仓储费', '超期仓储费']));
+
+    // Formulas per user:
+    // 基础仓储费 = Standard: daily storage fee per unit * Standard: average daily units available * Days in report period
+    let normalStorageFee = (stdDailyFee > 0 && stdAvgUnits > 0)
+      ? Number((stdDailyFee * stdAvgUnits * reportDays).toFixed(2))
+      : rawNormalFee;
+
+    // 365-450天仓储费 = Long-term (366-450 days): daily storage fee per unit * Long-term (366-450 days): average daily units available * Days in report period
+    let storageFee365_450 = (lt365DailyFee > 0 && lt365AvgUnits > 0)
+      ? Number((lt365DailyFee * lt365AvgUnits * reportDays).toFixed(2))
+      : rawFee365_450;
+
+    // 450天以上仓储费 = Standard: daily storage fee per unit * 10 * (450+日均库存数 || Standard日均库存数) * Days in report period
+    const units450Plus = lt450AvgUnits > 0 ? lt450AvgUnits : (rawFee450Plus > 0 ? stdAvgUnits : 0);
+    let storageFee450Plus = (stdDailyFee > 0 && units450Plus > 0)
+      ? Number((stdDailyFee * 10 * units450Plus * reportDays).toFixed(2))
+      : rawFee450Plus;
+
+    // If components are calculated but totalStorageFee not set, sum them
+    const calculatedSum = Number((normalStorageFee + storageFee365_450 + storageFee450Plus).toFixed(2));
+    const totalStorageFee = finalStorageFee > 0 ? finalStorageFee : calculatedSum;
+
+    // Check discrepancy: 基础+365-450+450+ 与 Final storage fee 对比，超过1美金做出特别批注
+    let storageFeeDiscrepancy: number | undefined;
+    let storageFeeDiscrepancyNote: string | undefined;
+
+    if (finalStorageFee > 0 && calculatedSum > 0) {
+      const diff = Number((finalStorageFee - calculatedSum).toFixed(2));
+      const absDiff = Math.abs(diff);
+      if (absDiff > 1.0) {
+        storageFeeDiscrepancy = diff;
+        storageFeeDiscrepancyNote = `拆分测算合计($${calculatedSum})与Final fee($${finalStorageFee})偏差$${absDiff.toFixed(2)} (> $1.00)`;
+      }
     }
 
     return {
       sku,
       itemId,
-      normalStorageFee: normalStorageFee || (totalStorageFee - storageFee365_450 - storageFee450Plus > 0 ? (totalStorageFee - storageFee365_450 - storageFee450Plus) : totalStorageFee),
+      normalStorageFee,
       storageFee365_450,
       storageFee450Plus,
       totalStorageFee,
+      storageFeeDiscrepancy,
+      storageFeeDiscrepancyNote,
       rawRow: r
     };
   }).filter(row => row.sku || row.itemId || row.totalStorageFee > 0);
