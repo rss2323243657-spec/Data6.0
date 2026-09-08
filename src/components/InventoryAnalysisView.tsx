@@ -12,6 +12,7 @@ import {
 import {
   BarChart,
   Bar,
+  Cell,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -32,17 +33,32 @@ export const InventoryAnalysisView: React.FC<InventoryAnalysisViewProps> = ({ re
   const [sortField, setSortField] = useState<string>('totalInventory');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  const { coreFinancials, inventoryAgingSummary, skuMetrics, spuMetrics, productTypeMetrics } = result;
+  const coreFinancials = result.coreFinancials || ({} as any);
+  const skuMetrics = result.skuMetrics || [];
+  const spuMetrics = result.spuMetrics || [];
+  const productTypeMetrics = result.productTypeMetrics || [];
+  const inventoryAgingSummary = result.inventoryAgingSummary || {
+    qty0_30: 0, pct0_30: 0,
+    qty31_90: 0, pct31_90: 0,
+    qty0_90: 0, pct0_90: 0,
+    qty91_180: 0, pct91_180: 0,
+    qty181_270: 0, pct181_270: 0,
+    qty271_365: 0, pct271_365: 0,
+    qty365Plus: 0, pct365Plus: 0,
+    qty365_450: 0, pct365_450: 0,
+    qty450Plus: 0, pct450Plus: 0,
+    totalUnits: 0
+  };
 
   // Inventory Aging Tiers Chart Data
   const agingChartData = useMemo(() => {
     return [
-      { name: '0-30天', qty: inventoryAgingSummary.qty0_30, pct: inventoryAgingSummary.pct0_30, fill: '#10b981' },
-      { name: '31-90天', qty: inventoryAgingSummary.qty31_90, pct: inventoryAgingSummary.pct31_90, fill: '#3b82f6' },
-      { name: '91-180天', qty: inventoryAgingSummary.qty91_180, pct: inventoryAgingSummary.pct91_180, fill: '#8b5cf6' },
-      { name: '181-270天', qty: inventoryAgingSummary.qty181_270, pct: inventoryAgingSummary.pct181_270, fill: '#f59e0b' },
-      { name: '271-365天', qty: inventoryAgingSummary.qty271_365, pct: inventoryAgingSummary.pct271_365, fill: '#f97316' },
-      { name: '365天+', qty: inventoryAgingSummary.qty365Plus, pct: inventoryAgingSummary.pct365Plus, fill: '#ef4444' }
+      { name: '0-30天', qty: inventoryAgingSummary.qty0_30 || 0, pct: inventoryAgingSummary.pct0_30 || 0, fill: '#10b981' },
+      { name: '31-90天', qty: inventoryAgingSummary.qty31_90 || 0, pct: inventoryAgingSummary.pct31_90 || 0, fill: '#3b82f6' },
+      { name: '91-180天', qty: inventoryAgingSummary.qty91_180 || 0, pct: inventoryAgingSummary.pct91_180 || 0, fill: '#8b5cf6' },
+      { name: '181-270天', qty: inventoryAgingSummary.qty181_270 || 0, pct: inventoryAgingSummary.pct181_270 || 0, fill: '#f59e0b' },
+      { name: '271-365天', qty: inventoryAgingSummary.qty271_365 || 0, pct: inventoryAgingSummary.pct271_365 || 0, fill: '#f97316' },
+      { name: '365天+', qty: inventoryAgingSummary.qty365Plus || 0, pct: inventoryAgingSummary.pct365Plus || 0, fill: '#ef4444' }
     ];
   }, [inventoryAgingSummary]);
 
@@ -125,21 +141,21 @@ export const InventoryAnalysisView: React.FC<InventoryAnalysisViewProps> = ({ re
         <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
           <div className="bg-slate-50 border border-slate-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-slate-400 block uppercase">总在库库存</span>
-            <span className="font-bold text-slate-900">{coreFinancials.totalInventoryUnits.toLocaleString()} 件</span>
+            <span className="font-bold text-slate-900">{(coreFinancials.totalInventoryUnits || inventoryAgingSummary.totalUnits || 0).toLocaleString()} 件</span>
           </div>
           <div className="bg-blue-50 border border-blue-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-[#0071dc] block uppercase">平均周转天数</span>
-            <span className="font-bold text-[#0071dc]">{coreFinancials.averageDaysOfSupply} 天</span>
+            <span className="font-bold text-[#0071dc]">{coreFinancials.averageDaysOfSupply ?? 0} 天</span>
           </div>
           <div className="bg-emerald-50 border border-emerald-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-emerald-600 block uppercase">健康库龄 (&lt;90天)</span>
             <span className="font-bold text-emerald-700">
-              {(inventoryAgingSummary.pct0_30 + inventoryAgingSummary.pct31_90).toFixed(1)}%
+              {((inventoryAgingSummary.pct0_30 || 0) + (inventoryAgingSummary.pct31_90 || 0)).toFixed(1)}%
             </span>
           </div>
           <div className="bg-rose-50 border border-rose-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-rose-600 block uppercase">超365天死库</span>
-            <span className="font-bold text-rose-700">{inventoryAgingSummary.qty365Plus} 件 ({inventoryAgingSummary.pct365Plus}%)</span>
+            <span className="font-bold text-rose-700">{inventoryAgingSummary.qty365Plus || 0} 件 ({inventoryAgingSummary.pct365Plus || 0}%)</span>
           </div>
         </div>
       </div>
@@ -175,7 +191,7 @@ export const InventoryAnalysisView: React.FC<InventoryAnalysisViewProps> = ({ re
                 />
                 <Bar dataKey="qty" name="库存量" radius={[4, 4, 0, 0]}>
                   {agingChartData.map((entry, index) => (
-                    <Bar key={`bar-${index}`} fill={entry.fill} />
+                    <Cell key={`cell-aging-${index}`} fill={entry.fill} />
                   ))}
                 </Bar>
               </BarChart>

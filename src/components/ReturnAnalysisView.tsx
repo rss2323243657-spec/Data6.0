@@ -39,7 +39,33 @@ export const ReturnAnalysisView: React.FC<ReturnAnalysisViewProps> = ({ result }
   const [sortField, setSortField] = useState<string>('returnQty');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  const { coreFinancials, returnBreakdown, skuMetrics, spuMetrics, productTypeMetrics } = result;
+  const coreFinancials = result.coreFinancials || ({} as any);
+  const skuMetrics = result.skuMetrics || [];
+  const spuMetrics = result.spuMetrics || [];
+  const productTypeMetrics = result.productTypeMetrics || [];
+  const returnBreakdown = result.returnBreakdown || {
+    responsibility: {
+      sellerQty: 0,
+      sellerAmount: 0,
+      sellerPct: 0,
+      walmartQty: 0,
+      walmartAmount: 0,
+      walmartPct: 0,
+      customerQty: 0,
+      customerAmount: 0,
+      customerPct: 0
+    },
+    keepIt: {
+      keepItQty: 0,
+      keepItAmount: 0,
+      keepItPct: 0,
+      physicalQty: 0,
+      physicalAmount: 0,
+      physicalPct: 0
+    },
+    byCategory: [],
+    bySpu: []
+  };
 
   const formatUsd = (n: number) =>
     `$${(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -189,18 +215,18 @@ export const ReturnAnalysisView: React.FC<ReturnAnalysisViewProps> = ({ result }
         <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
           <div className="bg-slate-50 border border-slate-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-slate-400 block uppercase">总退货额</span>
-            <span className="font-bold text-slate-900">{formatUsd(coreFinancials.returnAmount)}</span>
+            <span className="font-bold text-slate-900">{formatUsd(coreFinancials.returnAmount || 0)}</span>
           </div>
           <div className="bg-rose-50 border border-rose-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-rose-600 block uppercase">卖家责任退款</span>
             <span className="font-bold text-rose-700">
-              {formatUsd(returnBreakdown?.responsibility.sellerAmount || 0)}
+              {formatUsd(returnBreakdown?.responsibility?.sellerAmount || 0)}
             </span>
           </div>
           <div className="bg-amber-50 border border-amber-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-amber-600 block uppercase">Keep-It 损失</span>
             <span className="font-bold text-amber-700">
-              {formatUsd(returnBreakdown?.keepIt.keepItAmount || 0)}
+              {formatUsd(returnBreakdown?.keepIt?.keepItAmount || 0)}
             </span>
           </div>
         </div>

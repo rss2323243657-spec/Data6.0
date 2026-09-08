@@ -158,15 +158,25 @@ function findField(row: Record<string, any>, aliases: string[]): any {
 
 export function parseItemPerformance(rows: Record<string, any>[]): ItemPerformanceRow[] {
   return rows.map(r => {
-    const itemId = String(findField(r, ['item id', 'itemid', '商品id', '沃尔玛id', 'id']) || '').trim();
-    const sku = String(findField(r, ['sku', 'seller sku', '商家sku', 'product sku', '子sku']) || '').trim();
+    const itemId = String(findField(r, ['item id', 'item_id', 'itemid', '商品id', '沃尔玛id', 'walmart item id', 'id']) || '').trim();
+    const sku = String(findField(r, ['sku', 'seller sku', 'seller_sku', '商家sku', 'product sku', '子sku', 'item sku']) || '').trim();
     const itemName = String(findField(r, ['item name', 'product name', '商品名称', '品名', 'title']) || '').trim();
-    const adSpend = parseNum(findField(r, ['ad spend', 'advertising spend', 'ad cost', '花费', '广告花费', '广告支出', 'spend', 'cost']));
+    
+    // User requirement: Ad Spend, Advertised SKU Sales, Orders
+    const adSpend = parseNum(findField(r, [
+      'ad spend', 'ad_spend', 'adspend', 'spend', 'advertising spend', 'ad cost', '花费', '广告花费', '广告支出', '总花费', 'cost'
+    ]));
     const impressions = parseNum(findField(r, ['impressions', 'impr', '曝光', '展现', '曝光量']));
     const clicks = parseNum(findField(r, ['clicks', '点击', '点击量']));
-    const orders = parseNum(findField(r, ['orders', 'ad orders', '广告订单', '订单量', 'conversions']));
-    const attributedSales = parseNum(findField(r, ['attributed sales', 'ad sales', '广告销售额', '广告销售', 'sales', 'sales amount']));
-    const unitsSold = parseNum(findField(r, ['units sold', 'units', '销量', '广告销量']));
+    const orders = parseNum(findField(r, [
+      'orders', 'advertised sku units', 'ad orders', '广告订单数', '广告订单', '订单数', '订单量', 'conversions'
+    ]));
+    const attributedSales = parseNum(findField(r, [
+      'advertised sku sales', 'advertised_sku_sales', 'advertisedskusales', 'ad sales', 'attributed sales', 'ad_sales', 'attributedsales', '广告销售额', '广告销售', '广告成交额', 'sales amount', 'sales'
+    ]));
+    const unitsSold = parseNum(findField(r, [
+      'units sold', 'units_sold', 'advertised sku units', 'units', '广告销量', '销量', '件数'
+    ])) || orders;
 
     return {
       itemId,
@@ -190,30 +200,53 @@ export function parseItemPerformance(rows: Record<string, any>[]): ItemPerforman
 
 export function parseInventoryHealth(rows: Record<string, any>[]): InventoryHealthRow[] {
   return rows.map(r => {
-    const sku = String(findField(r, ['sku', 'seller sku', '商家sku', 'product sku']) || '').trim();
-    const itemId = String(findField(r, ['item id', 'itemid', '商品id']) || '').trim();
-    const totalInventory = parseNum(findField(r, ['total inventory', 'total on hand', '总库存', '在库库存', 'on hand']));
-    const availableInventory = parseNum(findField(r, ['available', 'available inventory', '可售库存', '可售数量', 'fulfillable']));
-    const reservedInventory = parseNum(findField(r, ['reserved', '预留库存', '锁定库存']));
-    const inboundInventory = parseNum(findField(r, ['inbound', '在途', '在途库存', '在途数量']));
+    const sku = String(findField(r, ['sku', 'seller sku', '商家sku', 'product sku', 'seller_sku', 'item sku']) || '').trim();
+    const itemId = String(findField(r, ['item id', 'itemid', '商品id', 'walmart item id', 'item_id']) || '').trim();
+    
+    // User requirement: 在库库存数主要看库存表中的Available Units字段
+    const availableInventory = parseNum(findField(r, [
+      'available units', 'available_units', 'available', 'available inventory', '可售库存', '在库库存', 'fulfillable'
+    ]));
+    const totalInventoryRaw = parseNum(findField(r, ['total inventory', 'total on hand', '总库存', 'on hand']));
+    const reservedInventory = parseNum(findField(r, ['reserved', '预留库存', '锁定库存', 'reserved units']));
+    const inboundInventory = parseNum(findField(r, ['inbound', '在途', '在途库存', '在途数量', 'inbound units']));
 
-    const age0_30 = parseNum(findField(r, ['0-30', '0 to 30', '0-30天', 'age 0-30']));
-    const age31_90 = parseNum(findField(r, ['31-90', '31 to 90', '31-90天', 'age 31-90']));
-    const age91_180 = parseNum(findField(r, ['91-180', '91 to 180', '91-180天', 'age 91-180']));
-    const age181_270 = parseNum(findField(r, ['181-270', '181 to 270', '181-270天', 'age 181-270']));
-    const age271_365 = parseNum(findField(r, ['271-365', '271 to 365', '271-365天', 'age 271-365']));
-    const age365_450 = parseNum(findField(r, ['365-450', '365 to 450', '365-450天', 'age 365-450']));
-    const age450Plus = parseNum(findField(r, ['450+', '450 +', '450天以上', 'age 450+']));
+    // User requirement:
+    // 365天以内库存数 = ATS 0-90 days + ATS 91-180 days + ATS 181-270 days + ATS 271-365 days
+    // 365-450天 = ATS 366-450 days 字段
+    // 450天以上 = ATS 450+ days 字段
+    const age0_90 = parseNum(findField(r, ['ats 0-90 days', 'ats 0-90', 'ats 0 to 90 days', '0-90 days', '0-90', '0-90天']));
+    const age0_30 = parseNum(findField(r, ['0-30', '0 to 30', '0-30天', 'age 0-30', 'ats 0-30']));
+    const age31_90 = parseNum(findField(r, ['31-90', '31 to 90', '31-90天', 'age 31-90', 'ats 31-90']));
+    
+    const finalAge0_30 = age0_30 || (age0_90 > 0 ? Math.round(age0_90 / 3) : 0);
+    const finalAge31_90 = age31_90 || (age0_90 > 0 ? (age0_90 - finalAge0_30) : 0);
+
+    const age91_180 = parseNum(findField(r, ['ats 91-180 days', 'ats 91-180', 'ats 91 to 180 days', '91-180 days', '91-180', '91-180天', 'age 91-180']));
+    const age181_270 = parseNum(findField(r, ['ats 181-270 days', 'ats 181-270', 'ats 181 to 270 days', '181-270 days', '181-270', '181-270天', 'age 181-270']));
+    const age271_365 = parseNum(findField(r, ['ats 271-365 days', 'ats 271-365', 'ats 271 to 365 days', '271-365 days', '271-365', '271-365天', 'age 271-365']));
+    
+    const age365_450 = parseNum(findField(r, [
+      'ats 366-450 days', 'ats 365-450 days', 'ats 366-450', 'ats 365-450', 
+      '366-450 days', '365-450 days', '366-450', '365-450', '365-450天', '366-450天', 'age 365-450'
+    ]));
+    
+    const age450Plus = parseNum(findField(r, [
+      'ats 450+ days', 'ats 450+', 'ats >450 days', '450+ days', '450+', '450 +', '450天以上', '450+天', 'age 450+'
+    ]));
+
+    // Total in-stock inventory: primarily Available Units as specified
+    const totalInventory = availableInventory > 0 ? availableInventory : (totalInventoryRaw || (availableInventory + reservedInventory));
 
     return {
       sku,
       itemId,
-      totalInventory: totalInventory || (availableInventory + reservedInventory),
-      availableInventory,
+      totalInventory,
+      availableInventory: availableInventory || totalInventory,
       reservedInventory,
       inboundInventory,
-      age0_30,
-      age31_90,
+      age0_30: finalAge0_30,
+      age31_90: finalAge31_90,
       age91_180,
       age181_270,
       age271_365,
@@ -342,25 +375,38 @@ export function parseReturnOrders(rows: Record<string, any>[]): ReturnOrderRow[]
 
 export function parseErpOrders(rows: Record<string, any>[]): ERPOrderRow[] {
   return rows.map((r, idx) => {
-    const orderId = String(findField(r, ['order id', 'order number', '订单编号', '订单号', 'erp order id']) || `ORD-${idx}`).trim();
-    const orderDate = String(findField(r, ['order date', 'order time', '下单时间', '订单时间', '支付时间', 'date']) || '').trim();
-    const sku = String(findField(r, ['sku', 'seller sku', '产品sku', '商家sku', 'item sku']) || '').trim();
-    const shippedQty = parseNum(findField(r, ['shipped qty', 'qty', 'quantity', '发货数量', '订单发货数量', '购买数量'])) || 1;
-    const unitPrice = parseNum(findField(r, ['unit price', 'price', '单价', '产品单价', '售价']));
-    let orderAmount = parseNum(findField(r, ['order amount', 'total amount', '订单金额', '金额', '销售额']));
+    const orderId = String(findField(r, ['order id', 'order number', '订单编号', '订单号', 'erp order id', '平台订单号', '销售单号']) || `ORD-${idx}`).trim();
+    const orderDate = String(findField(r, ['order date', 'order time', '下单时间', '订单时间', '支付时间', '发货时间', 'date']) || '').trim();
+    const sku = String(findField(r, ['sku', 'seller sku', '产品sku', '商家sku', 'item sku', '商品sku', '商品编码', '条形码', '品名']) || '').trim();
+    const itemId = String(findField(r, ['item id', 'itemid', '商品id', 'walmart item id', '平台商品编码', 'item_id']) || '').trim();
+    
+    // Shipped Qty: check all possible shipped qty aliases
+    const shippedQtyRaw = findField(r, [
+      'shipped qty', 'shipped_qty', 'ship qty', '发货数量', '发货数', '已发货数量', '出货数量', 
+      '实际发货数量', '发货件数', '订单发货数量', '出库数量', '购买数量', '数量', 'qty', 'quantity'
+    ]);
+    const shippedQty = shippedQtyRaw !== undefined ? parseNum(shippedQtyRaw) : 1;
+    
+    let unitPrice = parseNum(findField(r, ['unit price', 'price', '单价', '产品单价', '售价', '销售单价', '成交单价']));
+    let orderAmount = parseNum(findField(r, ['order amount', 'total amount', '订单金额', '金额', '销售额', '总金额', '总销售额', '成交金额']));
 
-    // Check if orderAmount is empty or equivalent to unitPrice
-    if (!orderAmount && unitPrice > 0) {
-      orderAmount = Number((unitPrice * shippedQty).toFixed(2));
+    // User requirement: "销售额=发货数量*商品单价，因此如果发货数量统计不对，销售额也会是错的"
+    if (unitPrice > 0 && shippedQty > 0) {
+      if (!orderAmount || (Math.abs(orderAmount - unitPrice) < 0.001 && shippedQty > 1)) {
+        orderAmount = Number((unitPrice * shippedQty).toFixed(2));
+      }
+    } else if (orderAmount > 0 && shippedQty > 0 && unitPrice === 0) {
+      unitPrice = Number((orderAmount / shippedQty).toFixed(2));
     }
 
-    const unitCostRmb = parseNum(findField(r, ['unit cost', 'product cost', '采购单价', '产品成本', '成本(rmb)', 'cost']));
-    const orderStatus = String(findField(r, ['order status', 'status', '订单状态', '状态']) || 'Shipped').trim();
+    const unitCostRmb = parseNum(findField(r, ['unit cost', 'product cost', '采购单价', '产品成本', '成本(rmb)', '成本', 'cost']));
+    const orderStatus = String(findField(r, ['order status', 'status', '订单状态', '状态', '发货状态']) || 'Shipped').trim();
 
     return {
       orderId,
       orderDate,
       sku,
+      itemId: itemId || undefined,
       unitPrice,
       shippedQty,
       orderAmount,
@@ -368,7 +414,7 @@ export function parseErpOrders(rows: Record<string, any>[]): ERPOrderRow[] {
       orderStatus,
       rawRow: r
     };
-  }).filter(row => row.sku);
+  }).filter(row => row.sku || row.itemId);
 }
 
 export function parseProductCatalog(rows: Record<string, any>[]): ProductCatalogRow[] {

@@ -36,7 +36,10 @@ export const SalesAnalysisView: React.FC<SalesAnalysisViewProps> = ({ result }) 
   const [sortField, setSortField] = useState<string>('salesAmount');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  const { coreFinancials, skuMetrics, spuMetrics, productTypeMetrics } = result;
+  const coreFinancials = result.coreFinancials || ({} as any);
+  const skuMetrics = result.skuMetrics || [];
+  const spuMetrics = result.spuMetrics || [];
+  const productTypeMetrics = result.productTypeMetrics || [];
 
   const formatUsd = (n: number) =>
     `$${(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -135,15 +138,15 @@ export const SalesAnalysisView: React.FC<SalesAnalysisViewProps> = ({ result }) 
         <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
           <div className="bg-slate-50 border border-slate-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-slate-400 block uppercase">当月总销售额</span>
-            <span className="font-bold text-slate-900">{formatUsd(coreFinancials.salesRevenue)}</span>
+            <span className="font-bold text-slate-900">{formatUsd(coreFinancials.salesRevenue || 0)}</span>
           </div>
           <div className="bg-blue-50 border border-blue-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-[#0071dc] block uppercase">总出货件数</span>
-            <span className="font-bold text-[#0071dc]">{coreFinancials.salesQty.toLocaleString()} 件</span>
+            <span className="font-bold text-[#0071dc]">{(coreFinancials.salesQty ?? coreFinancials.salesUnits ?? 0).toLocaleString()} 件</span>
           </div>
           <div className="bg-emerald-50 border border-emerald-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-emerald-600 block uppercase">全店平均客单价</span>
-            <span className="font-bold text-emerald-700">{formatUsd(coreFinancials.averageOrderValue)}</span>
+            <span className="font-bold text-emerald-700">{formatUsd(coreFinancials.averageOrderValue || 0)}</span>
           </div>
         </div>
       </div>

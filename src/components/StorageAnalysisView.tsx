@@ -37,7 +37,22 @@ export const StorageAnalysisView: React.FC<StorageAnalysisViewProps> = ({ result
   const [sortField, setSortField] = useState<string>('storageFeeUsd');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  const { coreFinancials, agingStorageLinkage, skuMetrics, spuMetrics, productTypeMetrics } = result;
+  const coreFinancials = result.coreFinancials || ({} as any);
+  const skuMetrics = result.skuMetrics || [];
+  const spuMetrics = result.spuMetrics || [];
+  const productTypeMetrics = result.productTypeMetrics || [];
+  const agingStorageLinkage = result.agingStorageLinkage || {
+    normalStoragePct: 0,
+    storageFee365_450Pct: 0,
+    storageFee450PlusPct: 0,
+    highAgingUnitsPct: 0,
+    highAgingStorageFeePct: 0,
+    highAgingStoragePct: 0,
+    highAgingFeePct: 0,
+    highAgingSkusCount: 0,
+    riskSkus: [],
+    topStorageSkus: []
+  };
 
   const formatUsd = (n: number) =>
     `$${(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -47,20 +62,20 @@ export const StorageAnalysisView: React.FC<StorageAnalysisViewProps> = ({ result
     return [
       {
         name: '常规基础仓储费',
-        amount: coreFinancials.normalStorageFee,
-        pct: agingStorageLinkage.normalStoragePct,
+        amount: coreFinancials.normalStorageFee || 0,
+        pct: agingStorageLinkage.normalStoragePct || 0,
         color: '#0071dc'
       },
       {
         name: '365-450天高库龄附加费',
-        amount: coreFinancials.storageFee365_450,
-        pct: agingStorageLinkage.storageFee365_450Pct,
+        amount: coreFinancials.storageFee365_450 || 0,
+        pct: agingStorageLinkage.storageFee365_450Pct || 0,
         color: '#f59e0b'
       },
       {
         name: '450天以上超期惩罚费',
-        amount: coreFinancials.storageFee450Plus,
-        pct: agingStorageLinkage.storageFee450PlusPct,
+        amount: coreFinancials.storageFee450Plus || 0,
+        pct: agingStorageLinkage.storageFee450PlusPct || 0,
         color: '#ef4444'
       }
     ].filter(d => d.amount > 0);
@@ -146,15 +161,15 @@ export const StorageAnalysisView: React.FC<StorageAnalysisViewProps> = ({ result
         <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
           <div className="bg-slate-50 border border-slate-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-slate-400 block uppercase">当月总仓储费</span>
-            <span className="font-bold text-slate-900">{formatUsd(coreFinancials.storageFeeUsd)}</span>
+            <span className="font-bold text-slate-900">{formatUsd(coreFinancials.storageFeeUsd ?? coreFinancials.totalStorageFee ?? 0)}</span>
           </div>
           <div className="bg-rose-50 border border-rose-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-rose-600 block uppercase">超365天高库龄附加费</span>
-            <span className="font-bold text-rose-700">{formatUsd(coreFinancials.highAgingStorageFee)}</span>
+            <span className="font-bold text-rose-700">{formatUsd(coreFinancials.highAgingStorageFee || 0)}</span>
           </div>
           <div className="bg-amber-50 border border-amber-200 rounded px-3 py-1.5 text-right">
             <span className="text-[10px] text-amber-600 block uppercase">高库龄附加费占比</span>
-            <span className="font-bold text-amber-700">{coreFinancials.highAgingStorageFeePct}%</span>
+            <span className="font-bold text-amber-700">{coreFinancials.highAgingStorageFeePct || 0}%</span>
           </div>
         </div>
       </div>

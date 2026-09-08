@@ -11,6 +11,8 @@ import {
   CoreFinancialMetrics,
   SkuMetric,
   SpuMetric,
+  ProductTypeMetric,
+  InventoryAgingSummary,
   HealthScoreBreakdown,
   Top10ProblemItem,
   Top10OpportunityItem,
@@ -37,26 +39,23 @@ export function runComprehensiveAnalysis(
   let cancelledOrdersExcludedCount = 0;
   let duplicateOrdersCount = 0;
   let amountDiscrepanciesCount = 0;
-  const seenOrderIds = new Set<string>();
 
   const validErpOrders: ERPOrderRow[] = [];
   for (const ord of erpOrders) {
     const status = (ord.orderStatus || '').toLowerCase().trim();
-    if (status === 'cancelled' || status === 'canceled' || status === '取消') {
+    if (status === 'cancelled' || status === 'canceled' || status === '取消' || status === '作废' || status === 'void') {
       cancelledOrdersExcludedCount++;
       continue;
     }
-    if (seenOrderIds.has(ord.orderId)) {
-      duplicateOrdersCount++;
-      continue;
-    }
-    seenOrderIds.add(ord.orderId);
 
-    // Check order amount consistency
-    const calculatedAmount = Number((ord.unitPrice * ord.shippedQty).toFixed(2));
-    if (Math.abs(calculatedAmount - ord.orderAmount) > 0.05) {
-      amountDiscrepanciesCount++;
+    // User requirement: 销售额 = 发货数量 * 商品单价
+    // If unitPrice is provided and > 0, calculate orderAmount strictly as unitPrice * shippedQty
+    if (ord.unitPrice > 0 && ord.shippedQty > 0) {
+      ord.orderAmount = Number((ord.unitPrice * ord.shippedQty).toFixed(2));
+    } else if (ord.orderAmount > 0 && ord.shippedQty > 0 && (!ord.unitPrice || ord.unitPrice <= 0)) {
+      ord.unitPrice = Number((ord.orderAmount / ord.shippedQty).toFixed(2));
     }
+
     validErpOrders.push(ord);
   }
 
@@ -65,7 +64,7 @@ export function runComprehensiveAnalysis(
   const validReturnOrders: ReturnOrderRow[] = [];
   for (const ret of returnOrders) {
     const status = (ret.returnStatus || '').toLowerCase().trim();
-    if (status === 'cancelled' || status === 'canceled' || status === '取消') {
+    if (status === 'cancelled' || status === 'canceled' || status === '取消' || status === 'void') {
       cancelledReturnsExcludedCount++;
       continue;
     }
@@ -73,19 +72,22 @@ export function runComprehensiveAnalysis(
   }
 
   // Deduplicate/Hierarchy check on Item Performance
-  // Check if rows are SKU-level or aggregate summaries
+  // Skip roll-up summary rows (e.g. Total, 汇总) so we do not double count
   const validAdRows: ItemPerformanceRow[] = [];
-  const seenAdSkus = new Set<string>();
   for (const ad of itemPerformance) {
     const sku = (ad.sku || '').trim();
-    if (!sku || sku.toLowerCase() === 'total' || sku.toLowerCase() === '汇总') {
-      continue; // skip rollup rows to prevent double counting
-    }
-    if (seenAdSkus.has(sku)) {
-      // duplicate SKU ad entry
+    const itemId = (ad.itemId || '').trim();
+    const itemName = (ad.itemName || '').trim();
+    if (!sku && !itemId) {
       continue;
     }
-    seenAdSkus.add(sku);
+    if (
+      sku.toLowerCase() === 'total' || sku.toLowerCase() === '汇总' ||
+      itemId.toLowerCase() === 'total' || itemId.toLowerCase() === '汇总' ||
+      itemName.toLowerCase() === 'total' || itemName.toLowerCase() === '汇总'
+    ) {
+      continue;
+    }
     validAdRows.push(ad);
   }
 
@@ -282,12 +284,65 @@ export function runComprehensiveAnalysis(
   const operatingProfit = Number((salesRevenue - totalOperatingCost).toFixed(2));
   const operatingProfitMargin = salesRevenue > 0 ? Number(((operatingProfit / salesRevenue) * 100).toFixed(2)) : 0;
 
+  // ==========================================
+  // 3. INVENTORY AGING SUMMARY (Pre-computed for Core Metrics)
+  // ==========================================
+  let totalUnits0_30 = 0;
+  let totalUnits31_90 = 0;
+  let totalUnits91_180 = 0;
+  let totalUnits181_270 = 0;
+  let totalUnits271_365 = 0;
+  let totalUnits365_450 = 0;
+  let totalUnits450Plus = 0;
+  let totalInvStock = 0;
+
+  for (const inv of inventoryHealth) {
+    totalUnits0_30 += inv.age0_30 || 0;
+    totalUnits31_90 += inv.age31_90 || 0;
+    totalUnits91_180 += inv.age91_180 || 0;
+    totalUnits181_270 += inv.age181_270 || 0;
+    totalUnits271_365 += inv.age271_365 || 0;
+    totalUnits365_450 += inv.age365_450 || 0;
+    totalUnits450Plus += inv.age450Plus || 0;
+    totalInvStock += (inv.availableInventory || inv.totalInventory || 0);
+  }
+
+  const totalUnits0_90 = totalUnits0_30 + totalUnits31_90;
+  const totalUnits365Plus = totalUnits365_450 + totalUnits450Plus;
+  const allInvUnits = totalUnits0_90 + totalUnits91_180 + totalUnits181_270 + totalUnits271_365 + totalUnits365Plus || totalInvStock || 0;
+  const dailySalesVelocity = salesUnits / 30;
+  const avgDaysSupply = dailySalesVelocity > 0 ? Math.round(allInvUnits / dailySalesVelocity) : 0;
+
+  const inventoryAgingSummary: InventoryAgingSummary = {
+    qty0_30: totalUnits0_30,
+    pct0_30: allInvUnits > 0 ? Number(((totalUnits0_30 / allInvUnits) * 100).toFixed(1)) : 0,
+    qty31_90: totalUnits31_90,
+    pct31_90: allInvUnits > 0 ? Number(((totalUnits31_90 / allInvUnits) * 100).toFixed(1)) : 0,
+    qty0_90: totalUnits0_90,
+    pct0_90: allInvUnits > 0 ? Number(((totalUnits0_90 / allInvUnits) * 100).toFixed(1)) : 0,
+    qty91_180: totalUnits91_180,
+    pct91_180: allInvUnits > 0 ? Number(((totalUnits91_180 / allInvUnits) * 100).toFixed(1)) : 0,
+    qty181_270: totalUnits181_270,
+    pct181_270: allInvUnits > 0 ? Number(((totalUnits181_270 / allInvUnits) * 100).toFixed(1)) : 0,
+    qty271_365: totalUnits271_365,
+    pct271_365: allInvUnits > 0 ? Number(((totalUnits271_365 / allInvUnits) * 100).toFixed(1)) : 0,
+    qty365Plus: totalUnits365Plus,
+    pct365Plus: allInvUnits > 0 ? Number(((totalUnits365Plus / allInvUnits) * 100).toFixed(1)) : 0,
+    qty365_450: totalUnits365_450,
+    pct365_450: allInvUnits > 0 ? Number(((totalUnits365_450 / allInvUnits) * 100).toFixed(1)) : 0,
+    qty450Plus: totalUnits450Plus,
+    pct450Plus: allInvUnits > 0 ? Number(((totalUnits450Plus / allInvUnits) * 100).toFixed(1)) : 0,
+    totalUnits: allInvUnits
+  };
+
   const coreFinancials: CoreFinancialMetrics = {
     salesRevenue,
     orderCount,
     salesUnits,
+    salesQty: salesUnits,
     averageOrderValue,
     adSpend: totalAdSpend,
+    totalAdSpend,
     adSales: totalAdSales,
     roas: totalRoas,
     acos: totalAcos,
@@ -300,16 +355,20 @@ export function runComprehensiveAnalysis(
     keepItLossUsd,
     sellerResponsibleRatePct,
     totalStorageFee,
+    storageFeeUsd: totalStorageFee,
     normalStorageFee,
     storageFee365_450,
     storageFee450Plus,
+    highAgingStorageFee,
     highAgingStorageFeePct,
     productCostUsd,
     headFreightUsd,
     otherExpensesUsd,
     totalOperatingCost,
     operatingProfit,
-    operatingProfitMargin
+    operatingProfitMargin,
+    totalInventoryUnits: allInvUnits,
+    averageDaysOfSupply: avgDaysSupply
   };
 
   // MoM diff
@@ -328,28 +387,186 @@ export function runComprehensiveAnalysis(
   }
 
   // ==========================================
-  // 3. SKU LEVEL DETAILED ANALYSIS
+  // 4. SKU LEVEL DETAILED ANALYSIS
   // ==========================================
-  // Collect all known SKUs
-  const allSkus = new Set<string>();
-  catalog.forEach(c => allSkus.add(c.sku));
-  validErpOrders.forEach(o => allSkus.add(o.sku));
-  validAdRows.forEach(a => allSkus.add(a.sku));
-  inventoryHealth.forEach(i => allSkus.add(i.sku));
-  storageFees.forEach(s => { if (s.sku) allSkus.add(s.sku); });
-  validReturnOrders.forEach(r => allSkus.add(r.sku));
+  // Build bi-directional cross-reference dictionary between SKU and Item ID across all tables
+  const skuToItemId = new Map<string, string>();
+  const itemIdToSku = new Map<string, string>();
+  const skuToCatalogMap = new Map<string, ProductCatalogRow>();
+  const itemIdToCatalogMap = new Map<string, ProductCatalogRow>();
+
+  const recordMapping = (skuRaw?: string, itemIdRaw?: string) => {
+    const s = (skuRaw || '').trim();
+    const it = (itemIdRaw || '').trim();
+    if (s && it && s !== 'N/A' && it !== 'N/A') {
+      if (!skuToItemId.has(s)) skuToItemId.set(s, it);
+      if (!itemIdToSku.has(it)) itemIdToSku.set(it, s);
+    }
+  };
+
+  for (const c of catalog) {
+    recordMapping(c.sku, c.itemId);
+    if (c.sku) skuToCatalogMap.set(c.sku.trim(), c);
+    if (c.itemId) itemIdToCatalogMap.set(c.itemId.trim(), c);
+  }
+  for (const inv of inventoryHealth) recordMapping(inv.sku, inv.itemId);
+  for (const st of storageFees) recordMapping(st.sku, st.itemId);
+  for (const ad of validAdRows) recordMapping(ad.sku, ad.itemId);
+  for (const ord of validErpOrders) recordMapping(ord.sku, ord.itemId);
+  for (const ret of validReturnOrders) recordMapping(ret.sku, ret.itemId);
+
+  interface CanonicalProductInfo {
+    canonicalKey: string;
+    sku: string;
+    itemId: string;
+    productName: string;
+    spu: string;
+    productType: string;
+  }
+
+  const canonicalProducts = new Map<string, CanonicalProductInfo>();
+  const lookupToCanonicalKey = new Map<string, string>();
+
+  function registerCanonicalProduct(rawSku?: string, rawItemId?: string, rawName?: string, rawSpu?: string, rawType?: string) {
+    const cleanSku = (rawSku || '').trim();
+    const cleanItemId = (rawItemId || '').trim();
+    if (!cleanSku && !cleanItemId) return;
+    if (cleanSku === 'N/A' && cleanItemId === 'N/A') return;
+
+    const resolvedItemId = (cleanItemId && cleanItemId !== 'N/A') ? cleanItemId : (skuToItemId.get(cleanSku) || '');
+    const resolvedSku = (cleanSku && cleanSku !== 'N/A') ? cleanSku : (itemIdToSku.get(cleanItemId) || '');
+
+    // Canonical key prioritizes Item ID, then SKU
+    let key = '';
+    if (resolvedItemId && lookupToCanonicalKey.has(`ITEM:${resolvedItemId}`)) {
+      key = lookupToCanonicalKey.get(`ITEM:${resolvedItemId}`)!;
+    } else if (resolvedSku && lookupToCanonicalKey.has(`SKU:${resolvedSku}`)) {
+      key = lookupToCanonicalKey.get(`SKU:${resolvedSku}`)!;
+    } else {
+      key = resolvedItemId ? `ITEM:${resolvedItemId}` : `SKU:${resolvedSku}`;
+    }
+
+    if (resolvedItemId) lookupToCanonicalKey.set(`ITEM:${resolvedItemId}`, key);
+    if (resolvedSku) lookupToCanonicalKey.set(`SKU:${resolvedSku}`, key);
+
+    const cat = (resolvedItemId ? itemIdToCatalogMap.get(resolvedItemId) : undefined) ||
+                (resolvedSku ? skuToCatalogMap.get(resolvedSku) : undefined);
+
+    let spu = cat?.spu || rawSpu || '';
+    if (!spu || spu === 'SPU-DEFAULT') {
+      if (resolvedSku) {
+        const parts = resolvedSku.split('-');
+        spu = parts.length > 1 ? parts.slice(0, -1).join('-') : resolvedSku;
+      } else {
+        spu = resolvedItemId || 'SPU-DEFAULT';
+      }
+    }
+
+    const existing = canonicalProducts.get(key);
+    if (!existing) {
+      canonicalProducts.set(key, {
+        canonicalKey: key,
+        sku: resolvedSku || cleanSku,
+        itemId: resolvedItemId || cleanItemId,
+        productName: cat?.productName || rawName || (resolvedSku || cleanSku),
+        spu,
+        productType: cat?.productType || rawType || '未分类'
+      });
+    } else {
+      if (!existing.sku && resolvedSku) existing.sku = resolvedSku;
+      if (!existing.itemId && resolvedItemId) existing.itemId = resolvedItemId;
+      if ((!existing.productName || existing.productName === existing.sku) && (cat?.productName || rawName)) {
+        existing.productName = cat?.productName || rawName || existing.productName;
+      }
+      if (existing.spu === 'SPU-DEFAULT' && spu !== 'SPU-DEFAULT') {
+        existing.spu = spu;
+      }
+      if (existing.productType === '未分类' && (cat?.productType || rawType)) {
+        existing.productType = cat?.productType || rawType || existing.productType;
+      }
+    }
+  }
+
+  // Register all items from all sheets
+  for (const c of catalog) registerCanonicalProduct(c.sku, c.itemId, c.productName, c.spu, c.productType);
+  for (const o of validErpOrders) registerCanonicalProduct(o.sku, o.itemId, (o as any).productName);
+  for (const a of validAdRows) registerCanonicalProduct(a.sku, a.itemId, a.itemName);
+  for (const i of inventoryHealth) registerCanonicalProduct(i.sku, i.itemId, (i as any).productName);
+  for (const s of storageFees) registerCanonicalProduct(s.sku, s.itemId, (s as any).productName);
+  for (const r of validReturnOrders) registerCanonicalProduct(r.sku, r.itemId, (r as any).productName);
+
+  function getRowCanonicalKey(skuRaw?: string, itemIdRaw?: string): string {
+    const cleanItemId = (itemIdRaw || '').trim();
+    const cleanSku = (skuRaw || '').trim();
+    if (cleanItemId && cleanItemId !== 'N/A') {
+      const k = lookupToCanonicalKey.get(`ITEM:${cleanItemId}`);
+      if (k) return k;
+    }
+    if (cleanSku && cleanSku !== 'N/A') {
+      const k = lookupToCanonicalKey.get(`SKU:${cleanSku}`);
+      if (k) return k;
+    }
+    if (cleanItemId && cleanItemId !== 'N/A') return `ITEM:${cleanItemId}`;
+    if (cleanSku && cleanSku !== 'N/A') return `SKU:${cleanSku}`;
+    return '';
+  }
+
+  // Group ERP Orders by canonical key
+  const erpOrdersByProduct = new Map<string, ERPOrderRow[]>();
+  for (const ord of validErpOrders) {
+    const key = getRowCanonicalKey(ord.sku, ord.itemId);
+    if (!key) continue;
+    if (!erpOrdersByProduct.has(key)) erpOrdersByProduct.set(key, []);
+    erpOrdersByProduct.get(key)!.push(ord);
+  }
+
+  // Group Ad Rows by canonical key
+  const adRowsByProduct = new Map<string, ItemPerformanceRow[]>();
+  for (const ad of validAdRows) {
+    const key = getRowCanonicalKey(ad.sku, ad.itemId);
+    if (!key) continue;
+    if (!adRowsByProduct.has(key)) adRowsByProduct.set(key, []);
+    adRowsByProduct.get(key)!.push(ad);
+  }
+
+  // Group Returns by canonical key
+  const returnsByProduct = new Map<string, ReturnOrderRow[]>();
+  for (const ret of validReturnOrders) {
+    const key = getRowCanonicalKey(ret.sku, ret.itemId);
+    if (!key) continue;
+    if (!returnsByProduct.has(key)) returnsByProduct.set(key, []);
+    returnsByProduct.get(key)!.push(ret);
+  }
+
+  // Group Storage by canonical key
+  const storageByProduct = new Map<string, StorageFeeRow[]>();
+  for (const st of storageFees) {
+    const key = getRowCanonicalKey(st.sku, st.itemId);
+    if (!key) continue;
+    if (!storageByProduct.has(key)) storageByProduct.set(key, []);
+    storageByProduct.get(key)!.push(st);
+  }
+
+  // Group Inventory by canonical key
+  const inventoryByProduct = new Map<string, InventoryHealthRow[]>();
+  for (const inv of inventoryHealth) {
+    const key = getRowCanonicalKey(inv.sku, inv.itemId);
+    if (!key) continue;
+    if (!inventoryByProduct.has(key)) inventoryByProduct.set(key, []);
+    inventoryByProduct.get(key)!.push(inv);
+  }
 
   const skuMetrics: SkuMetric[] = [];
 
-  for (const sku of allSkus) {
-    const cat = skuToCatalog.get(sku);
-    const itemId = cat?.itemId || inventoryHealth.find(i => i.sku === sku)?.itemId || validAdRows.find(a => a.sku === sku)?.itemId || 'N/A';
-    const spu = cat?.spu || 'SPU-DEFAULT';
-    const productType = cat?.productType || '未分类';
-    const productName = cat?.productName || validAdRows.find(a => a.sku === sku)?.itemName || sku;
+  for (const [key, prod] of canonicalProducts.entries()) {
+    const sku = prod.sku;
+    const itemId = prod.itemId || 'N/A';
+    const spu = prod.spu;
+    const productType = prod.productType;
+    const productName = prod.productName;
 
-    // ERP Orders for this SKU
-    const skuOrders = validErpOrders.filter(o => o.sku === sku);
+    // ERP Orders for this SKU/Item
+    const skuOrders = erpOrdersByProduct.get(key) || [];
     let skuSalesAmount = 0;
     let skuSalesQty = 0;
     let skuErpCostRmb = 0;
@@ -368,13 +585,22 @@ export function runComprehensiveAnalysis(
     const skuOrderCount = skuOrders.length;
     const unitPrice = skuSalesQty > 0 ? Number((skuSalesAmount / skuSalesQty).toFixed(2)) : 0;
 
-    // Ad Spend for this SKU
-    const adData = validAdRows.find(a => a.sku === sku);
-    const adSpend = adData?.adSpend || 0;
-    const adSales = adData?.attributedSales || 0;
-    const impressions = adData?.impressions || 0;
-    const clicks = adData?.clicks || 0;
-    const adOrders = adData?.orders || 0;
+    // Ad Spend for this SKU/Item (Aggregate all matching ad rows)
+    const matchingAdRows = adRowsByProduct.get(key) || [];
+    let adSpend = 0;
+    let adSales = 0;
+    let impressions = 0;
+    let clicks = 0;
+    let adOrders = 0;
+    for (const a of matchingAdRows) {
+      adSpend += a.adSpend || 0;
+      adSales += a.attributedSales || 0;
+      impressions += a.impressions || 0;
+      clicks += a.clicks || 0;
+      adOrders += a.orders || 0;
+    }
+    adSpend = Number(adSpend.toFixed(2));
+    adSales = Number(adSales.toFixed(2));
     const ctr = impressions > 0 ? Number(((clicks / impressions) * 100).toFixed(2)) : 0;
     const cpc = clicks > 0 ? Number((adSpend / clicks).toFixed(2)) : 0;
     const cvr = clicks > 0 ? Number(((adOrders / clicks) * 100).toFixed(2)) : 0;
@@ -382,8 +608,8 @@ export function runComprehensiveAnalysis(
     const acos = adSales > 0 ? Number((adSpend / adSales).toFixed(4)) : 0;
     const adSpendSalesRatio = skuSalesAmount > 0 ? Number(((adSpend / skuSalesAmount) * 100).toFixed(2)) : 0;
 
-    // Returns for this SKU
-    const skuReturns = validReturnOrders.filter(r => r.sku === sku);
+    // Returns for this SKU/Item
+    const skuReturns = returnsByProduct.get(key) || [];
     let returnQty = 0;
     let returnAmount = 0;
     let keepItQty = 0;
@@ -405,19 +631,34 @@ export function runComprehensiveAnalysis(
     const returnAmountRate = skuSalesAmount > 0 ? Number(((returnAmount / skuSalesAmount) * 100).toFixed(2)) : 0;
     const effectiveSalesQty = Math.max(0, skuSalesQty - returnQty);
 
-    // Storage for this SKU
-    const stData = storageFees.find(s => s.sku === sku || (s.itemId && s.itemId === itemId));
-    const normalStorageFeeUsd = stData?.normalStorageFee || 0;
-    const highAgingStorageFeeUsd = (stData?.storageFee365_450 || 0) + (stData?.storageFee450Plus || 0);
-    const storageFeeUsd = stData?.totalStorageFee || (normalStorageFeeUsd + highAgingStorageFeeUsd);
+    // Storage for this SKU/Item
+    const matchingStorageRows = storageByProduct.get(key) || [];
+    let normalStorageFeeUsd = 0;
+    let highAgingStorageFeeUsd = 0;
+    let storageFeeUsd = 0;
+    for (const st of matchingStorageRows) {
+      normalStorageFeeUsd += st.normalStorageFee || 0;
+      highAgingStorageFeeUsd += (st.storageFee365_450 || 0) + (st.storageFee450Plus || 0);
+      storageFeeUsd += (st.totalStorageFee || (st.normalStorageFee + (st.storageFee365_450 || 0) + (st.storageFee450Plus || 0)));
+    }
+    normalStorageFeeUsd = Number(normalStorageFeeUsd.toFixed(2));
+    highAgingStorageFeeUsd = Number(highAgingStorageFeeUsd.toFixed(2));
+    storageFeeUsd = Number(storageFeeUsd.toFixed(2));
 
-    // Inventory for this SKU
-    const invData = inventoryHealth.find(i => i.sku === sku);
-    const totalInventory = invData?.totalInventory || 0;
-    const availableInventory = invData?.availableInventory || 0;
-    const age0_90 = (invData?.age0_30 || 0) + (invData?.age31_90 || 0);
-    const age91_365 = (invData?.age91_180 || 0) + (invData?.age181_270 || 0) + (invData?.age271_365 || 0);
-    const age365Plus = (invData?.age365_450 || 0) + (invData?.age450Plus || 0);
+    // Inventory for this SKU/Item
+    const matchingInvRows = inventoryByProduct.get(key) || [];
+    let totalInventory = 0;
+    let availableInventory = 0;
+    let age0_90 = 0;
+    let age91_365 = 0;
+    let age365Plus = 0;
+    for (const inv of matchingInvRows) {
+      totalInventory += inv.totalInventory || 0;
+      availableInventory += inv.availableInventory || 0;
+      age0_90 += (inv.age0_30 || 0) + (inv.age31_90 || 0);
+      age91_365 += (inv.age91_180 || 0) + (inv.age181_270 || 0) + (inv.age271_365 || 0);
+      age365Plus += (inv.age365_450 || 0) + (inv.age450Plus || 0);
+    }
     const dailyVelocity = skuSalesQty / 30;
     const daysOfSupply = dailyVelocity > 0 ? Math.round(totalInventory / dailyVelocity) : (totalInventory > 0 ? 999 : 0);
 
@@ -448,7 +689,7 @@ export function runComprehensiveAnalysis(
 
     // Quadrant calculation
     // Thresholds: average sales share, profit margin > 25%
-    const avgSalesThreshold = salesRevenue / (allSkus.size || 1);
+    const avgSalesThreshold = salesRevenue / (canonicalProducts.size || 1);
     const isHighSales = skuSalesAmount >= avgSalesThreshold;
     const isHighProfit = operatingProfitMargin >= 25 && operatingProfitUsd > 0;
 
@@ -469,7 +710,7 @@ export function runComprehensiveAnalysis(
     }
 
     // Ad vs Profit Quadrant
-    const avgAdThreshold = totalAdSpend / (allSkus.size || 1);
+    const avgAdThreshold = totalAdSpend / (canonicalProducts.size || 1);
     const isHighAd = adSpend >= avgAdThreshold;
     let adProfitQuadrant: 'HighAdHighProfit' | 'HighAdLowProfit' | 'LowAdHighProfit' | 'LowAdLowProfit';
     if (isHighAd && isHighProfit) adProfitQuadrant = 'HighAdHighProfit';
@@ -630,24 +871,89 @@ export function runComprehensiveAnalysis(
   }).sort((a, b) => b.salesAmount - a.salesAmount);
 
   // Product Type metrics
-  const typeMap = new Map<string, { sales: number; profit: number; ad: number; inv: number }>();
+  const typeMap = new Map<string, {
+    skus: Set<string>;
+    spus: Set<string>;
+    salesAmount: number;
+    salesQty: number;
+    profitAmount: number;
+    adSpend: number;
+    adSales: number;
+    returnQty: number;
+    returnAmount: number;
+    storageFeeUsd: number;
+    totalInventory: number;
+    availableInventory: number;
+  }>();
+
   for (const s of skuMetrics) {
-    const t = s.productType;
-    if (!typeMap.has(t)) typeMap.set(t, { sales: 0, profit: 0, ad: 0, inv: 0 });
+    const t = s.productType || '未分类';
+    if (!typeMap.has(t)) {
+      typeMap.set(t, {
+        skus: new Set(),
+        spus: new Set(),
+        salesAmount: 0,
+        salesQty: 0,
+        profitAmount: 0,
+        adSpend: 0,
+        adSales: 0,
+        returnQty: 0,
+        returnAmount: 0,
+        storageFeeUsd: 0,
+        totalInventory: 0,
+        availableInventory: 0
+      });
+    }
     const cur = typeMap.get(t)!;
-    cur.sales += s.salesAmount;
-    cur.profit += s.operatingProfitUsd;
-    cur.ad += s.adSpend;
-    cur.inv += s.totalInventory;
+    cur.skus.add(s.sku);
+    if (s.spu) cur.spus.add(s.spu);
+    cur.salesAmount += s.salesAmount;
+    cur.salesQty += s.salesQty;
+    cur.profitAmount += s.operatingProfitUsd;
+    cur.adSpend += s.adSpend;
+    cur.adSales += s.adSales;
+    cur.returnQty += s.returnQty;
+    cur.returnAmount += s.returnAmount;
+    cur.storageFeeUsd += s.storageFeeUsd;
+    cur.totalInventory += s.totalInventory;
+    cur.availableInventory += s.availableInventory;
   }
-  const productTypeMetrics = Array.from(typeMap.entries()).map(([type, data]) => ({
-    productType: type,
-    salesAmount: Number(data.sales.toFixed(2)),
-    salesSharePct: salesRevenue > 0 ? Number(((data.sales / salesRevenue) * 100).toFixed(1)) : 0,
-    profitAmount: Number(data.profit.toFixed(2)),
-    adSpend: Number(data.ad.toFixed(2)),
-    inventory: data.inv
-  })).sort((a, b) => b.salesAmount - a.salesAmount);
+
+  const productTypeMetrics: ProductTypeMetric[] = Array.from(typeMap.entries()).map(([type, data]) => {
+    const salesAmount = Number(data.salesAmount.toFixed(2));
+    const profitAmount = Number(data.profitAmount.toFixed(2));
+    const adSpend = Number(data.adSpend.toFixed(2));
+    const adSales = Number(data.adSales.toFixed(2));
+    const returnAmount = Number(data.returnAmount.toFixed(2));
+    const storageFeeUsd = Number(data.storageFeeUsd.toFixed(2));
+    const salesSharePct = salesRevenue > 0 ? Number(((salesAmount / salesRevenue) * 100).toFixed(1)) : 0;
+    const roas = adSpend > 0 ? Number((adSales / adSpend).toFixed(2)) : 0;
+    const acos = adSales > 0 ? Number((adSpend / adSales).toFixed(4)) : 0;
+    const returnRatePct = data.salesQty > 0 ? Number(((data.returnQty / data.salesQty) * 100).toFixed(2)) : 0;
+    const operatingProfitMargin = salesAmount > 0 ? Number(((profitAmount / salesAmount) * 100).toFixed(2)) : 0;
+
+    return {
+      productType: type,
+      skuCount: data.skus.size,
+      spuCount: data.spus.size,
+      salesAmount,
+      salesQty: data.salesQty,
+      salesSharePct,
+      profitAmount,
+      adSpend,
+      adSales,
+      roas,
+      acos,
+      returnQty: data.returnQty,
+      returnAmount,
+      returnRatePct,
+      storageFeeUsd,
+      totalInventory: data.totalInventory,
+      availableInventory: data.availableInventory,
+      operatingProfitUsd: profitAmount,
+      operatingProfitMargin
+    };
+  }).sort((a, b) => b.salesAmount - a.salesAmount);
 
   // ==========================================
   // 5. FIVE CROSS-LINKAGE DIAGNOSTICS
@@ -1248,6 +1554,7 @@ export function runComprehensiveAnalysis(
     skuMetrics,
     spuMetrics,
     productTypeMetrics,
+    inventoryAgingSummary,
     healthScore,
     salesAdProfitLinkage: {
       caseType: linkageCase,

@@ -68,6 +68,7 @@ export interface ERPOrderRow {
   orderId: string;
   orderDate: string; // YYYY-MM-DD
   sku: string;
+  itemId?: string;
   unitPrice: number;
   shippedQty: number;
   orderAmount: number;
@@ -205,24 +206,57 @@ export interface ProductTypeMetric {
   spuCount: number;
   salesAmount: number;
   salesQty: number;
+  salesSharePct: number;
+  profitAmount?: number;
   adSpend: number;
   adSales: number;
+  roas: number;
+  acos: number;
   returnQty: number;
   returnAmount: number;
+  returnRatePct: number;
   storageFeeUsd: number;
+  totalInventory: number;
+  availableInventory: number;
   operatingProfitUsd: number;
   operatingProfitMargin: number;
+}
+
+export interface InventoryAgingSummary {
+  qty0_30: number;
+  pct0_30: number;
+  qty31_90: number;
+  pct31_90: number;
+  qty0_90: number;
+  pct0_90: number;
+  qty91_180: number;
+  pct91_180: number;
+  qty181_270: number;
+  pct181_270: number;
+  qty271_365: number;
+  pct271_365: number;
+  qty365Plus: number;
+  pct365Plus: number;
+  qty365_450: number;
+  pct365_450: number;
+  qty450Plus: number;
+  pct450Plus: number;
+  totalUnits: number;
 }
 
 export interface CoreFinancialMetrics {
   salesRevenue: number;
   orderCount: number;
   salesUnits: number;
+  salesQty?: number; // alias for salesUnits
   averageOrderValue: number;
   
   adSpend: number;
+  totalAdSpend?: number; // alias for adSpend
   adSales: number;
+  totalAdSales?: number; // alias for adSales
   roas: number;
+  totalRoas?: number; // alias for roas
   acos: number;
   adSpendToSalesPct: number;
   
@@ -235,10 +269,15 @@ export interface CoreFinancialMetrics {
   sellerResponsibleRatePct: number;
   
   totalStorageFee: number;
+  storageFeeUsd?: number; // alias for totalStorageFee
   normalStorageFee: number;
   storageFee365_450: number;
   storageFee450Plus: number;
+  highAgingStorageFee?: number; // storageFee365_450 + storageFee450Plus
   highAgingStorageFeePct: number;
+
+  totalInventoryUnits?: number;
+  averageDaysOfSupply?: number;
   
   productCostUsd: number;
   headFreightUsd: number;
@@ -347,14 +386,8 @@ export interface AnalysisResult {
   momComparison?: MonthOverMonthDiff;
   skuMetrics: SkuMetric[];
   spuMetrics: SpuMetric[];
-  productTypeMetrics: {
-    productType: string;
-    salesAmount: number;
-    salesSharePct: number;
-    profitAmount: number;
-    adSpend: number;
-    inventory: number;
-  }[];
+  productTypeMetrics: ProductTypeMetric[];
+  inventoryAgingSummary: InventoryAgingSummary;
   healthScore: HealthScoreBreakdown;
   salesAdProfitLinkage: {
     caseType: '健康增长' | '广告/成本侵蚀利润' | '主动收缩' | '高风险' | '自然增长较好';
